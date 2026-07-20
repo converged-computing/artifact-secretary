@@ -1,0 +1,6 @@
+.env
+artifact_secretary.egg-info
+build
+dist
+*.json
+__pycache__
