@@ -1,65 +1,136 @@
-"""List container images (and tags) published to GitHub Container Registry for an
-org/repo, so a catalog can be derived programmatically instead of typed by hand.
+"""List container images (and tags) for a GitHub org/repo, token-free.
 
-Uses the GitHub Packages API, which needs a token with read:packages even for
-public packages. Set GITHUB_TOKEN (or pass token=). Pure stdlib.
+The GitHub Packages REST API needs a token with read:packages (and org SSO
+authorization), and 403s otherwise — awkward for a quick catalog. For PUBLIC
+packages we don't need it: the org packages page enumerates the package names,
+and the GHCR registry (OCI Distribution API) lists tags and reports each tag's
+real architecture anonymously. That lets us drop arm builds by what they ARE,
+not by tag name (e.g. an arm64 image tagged 'hpc7g' is correctly excluded).
+
+Pure stdlib. For private packages you'd need registry auth; that's out of scope.
 """
 from __future__ import annotations
 
 import json
-import os
+import re
 import urllib.parse
 import urllib.request
 
-API = "https://api.github.com"
+_UA = "artifact-secretary"
+_MANIFEST_ACCEPT = ",".join([
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.docker.distribution.manifest.v2+json",
+])
 
 
-def _get(url: str, token: str) -> tuple[list, dict]:
-    req = urllib.request.Request(url, headers={
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "artifact-secretary",
-    })
+def _json(url: str, headers: dict | None = None):
+    req = urllib.request.Request(url, headers={"User-Agent": _UA, **(headers or {})})
     with urllib.request.urlopen(req) as r:
         return json.load(r), dict(r.headers)
 
 
-def _paginate(url: str, token: str):
+def _text(url: str) -> str:
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html"})
+    with urllib.request.urlopen(req) as r:
+        return r.read().decode("utf-8", "ignore")
+
+
+# --- package names from the public org packages page --------------------------
+
+def list_packages(org: str, repo: str | None = None) -> list[str]:
+    names: list[str] = []
+    page = 1
+    while True:
+        q = {"per_page": "100", "page": str(page), "ecosystem": "container"}
+        if repo:
+            q["repo_name"] = repo
+        html = _text(f"https://github.com/orgs/{urllib.parse.quote(org)}/packages?{urllib.parse.urlencode(q)}")
+        found = [urllib.parse.unquote(m)
+                 for m in re.findall(r"/packages/container/package/([^\"?]+)", html)]
+        new = [n for n in found if n not in names]
+        if not new:
+            break
+        names += new
+        page += 1
+        if page > 50:  # safety
+            break
+    return sorted(set(names))
+
+
+# --- tags and architecture from the anonymous registry ------------------------
+
+def _registry_token(repo_path: str) -> str:
+    tok, _ = _json(f"https://ghcr.io/token?scope=repository:{repo_path}:pull&service=ghcr.io")
+    return tok["token"]
+
+
+def _tags(repo_path: str, token: str) -> list[str]:
+    url = f"https://ghcr.io/v2/{repo_path}/tags/list?n=1000"
+    tags: list[str] = []
     while url:
-        data, headers = _get(url, token)
-        for item in data:
-            yield item
-        # follow RFC 5988 Link: <...>; rel="next"
+        data, headers = _json(url, {"Authorization": f"Bearer {token}"})
+        tags += data.get("tags") or []
         nxt = ""
         for part in headers.get("Link", "").split(","):
             if 'rel="next"' in part:
-                nxt = part[part.find("<") + 1:part.find(">")]
+                nxt = "https://ghcr.io" + part[part.find("<") + 1:part.find(">")]
         url = nxt
+    return tags
 
 
-def list_ghcr(org: str, repo: str | None = None,
-              exclude: tuple[str, ...] = ("arm", "aarch64"),
-              token: str | None = None) -> list[str]:
-    """Return image references ghcr.io/<org>/<pkg>:<tag> for an org, optionally
-    restricted to packages linked to `repo`. Tags containing any `exclude`
-    substring are dropped (default: arm builds)."""
-    token = token or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    if not token:
-        raise SystemExit("set GITHUB_TOKEN (needs read:packages) to list GHCR packages")
+def tag_arches(repo_path: str, tag: str, token: str) -> list[str]:
+    """linux/<arch> platforms a tag provides. Handles multi-arch indexes and
+    single-manifest images (arch read from the config blob)."""
+    man, _ = _json(f"https://ghcr.io/v2/{repo_path}/manifests/{tag}",
+                   {"Authorization": f"Bearer {token}", "Accept": _MANIFEST_ACCEPT})
+    if "manifests" in man:  # index / manifest list
+        out = []
+        for m in man["manifests"]:
+            p = m.get("platform") or {}
+            if p.get("architecture") and p.get("architecture") != "unknown":
+                out.append(f"{p.get('os','linux')}/{p['architecture']}")
+        return sorted(set(out))
+    cfg = (man.get("config") or {}).get("digest")
+    if not cfg:
+        return []
+    conf, _ = _json(f"https://ghcr.io/v2/{repo_path}/blobs/{cfg}",
+                    {"Authorization": f"Bearer {token}"})
+    return [f"{conf.get('os', 'linux')}/{conf.get('architecture', 'unknown')}"]
+
+
+def list_ghcr(org: str, repo: str | None = None, arch: str = "amd64",
+              exclude: tuple[str, ...] = (), on_note=None) -> list[str]:
+    """Image references ghcr.io/<org>/<pkg>:<tag> for a repo. Keeps only tags
+    that provide linux/<arch> (set arch='' to keep all). `exclude` drops tags
+    containing any of the given substrings."""
+    def note(msg):
+        if on_note:
+            on_note(msg)
 
     refs: list[str] = []
-    pkgs_url = f"{API}/orgs/{urllib.parse.quote(org)}/packages?package_type=container&per_page=100"
-    for pkg in _paginate(pkgs_url, token):
-        if repo and (pkg.get("repository") or {}).get("name") != repo:
+    packages = list_packages(org, repo)
+    note(f"{len(packages)} package(s)")
+    for pkg in packages:
+        repo_path = f"{org}/{pkg}"
+        try:
+            token = _registry_token(repo_path)
+            tags = _tags(repo_path, token)
+        except Exception as e:
+            note(f"{pkg}: could not list tags ({e})")
             continue
-        name = pkg["name"]
-        enc = urllib.parse.quote(name, safe="")
-        versions_url = f"{API}/orgs/{urllib.parse.quote(org)}/packages/container/{enc}/versions?per_page=100"
-        for ver in _paginate(versions_url, token):
-            for tag in ((ver.get("metadata") or {}).get("container") or {}).get("tags", []):
-                low = tag.lower()
-                if any(x in low for x in exclude):
-                    continue
-                refs.append(f"ghcr.io/{org}/{name}:{tag}")
+        kept = 0
+        for tag in tags:
+            if any(x in tag.lower() for x in exclude):
+                continue
+            if arch:
+                try:
+                    if f"linux/{arch}" not in tag_arches(repo_path, tag, token):
+                        continue
+                except Exception:
+                    continue  # unreadable manifest -> skip this tag
+            refs.append(f"ghcr.io/{repo_path}:{tag}")
+            kept += 1
+        note(f"{pkg}: {kept} tag(s)")
     return sorted(set(refs))

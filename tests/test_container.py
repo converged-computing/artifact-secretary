@@ -1,3 +1,4 @@
+import subprocess
 import json, os, subprocess, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from secretary.container.session import ContainerSession, SkipContainer
@@ -5,8 +6,9 @@ from secretary.container.remote import RemoteInspector
 
 
 class FakeDocker:
-    def __init__(self, present=False, has_python=True):
-        self.present, self.has_python = present, has_python
+    def __init__(self, present=False, has_python=True, pm=""):
+        self.present, self.has_python, self.pm = present, has_python, pm
+        self.installed = False
         self.calls = []
 
     def __call__(self, argv):
@@ -24,7 +26,14 @@ class FakeDocker:
         if a[:2] == ["docker", "cp"]:
             return cp(0)
         if a[:2] == ["docker", "exec"] and a[-1] == "--version":
-            return cp(0 if self.has_python else 127, out="Python 3.11.2")
+            return cp(0 if (self.has_python or self.installed) else 127, out="Python 3.11.2")
+        if a[:2] == ["docker", "network"]:
+            return cp(0)
+        if "command -v" in " ".join(a):
+            return cp(0, out=(f"/usr/bin/{self.pm}" if self.pm else ""))
+        if a[:2] == ["docker", "exec"] and "install" in " ".join(a):
+            self.installed = True
+            return cp(0)
         if a[:2] == ["docker", "exec"]:  # in-container probe call
             return cp(0, out=json.dumps({"is_elf": True, "arch": "arm64", "needed": ["libc.so.6"]}))
         if a[:3] == ["docker", "rm", "-f"]:
@@ -93,8 +102,71 @@ def test_remote_inspector_parses_exec_json():
     print("OK RemoteInspector parses exec JSON; probe invoked with PYTHONPATH=/tmp")
 
 
+def test_installs_python_when_missing():
+    fd = FakeDocker(present=True, has_python=False, pm="apt-get")
+    with ContainerSession("reg/ubuntu:t", runner=fd) as insp:
+        assert isinstance(insp, RemoteInspector)
+    assert fd.ran("docker", "network", "connect") and fd.ran("docker", "network", "disconnect")
+    assert any("install" in " ".join(c) for c in fd.calls)
+    assert fd.ran("docker", "cp"), "should proceed to copy the probe after install"
+    print("OK installs python via apt-get; network attached only transiently")
+
+
+def test_network_attach_failure_is_reported():
+    fd = FakeDocker(present=True, has_python=False, pm="apt-get")
+    orig = fd.__call__
+    def call(argv):
+        if argv[:3] == ["docker", "network", "connect"]:
+            return subprocess.CompletedProcess(argv, 1, "", "network bridge not found")
+        return orig(argv)
+    try:
+        with ContainerSession("reg/ubuntu:t", runner=call):
+            assert False
+    except SkipContainer as e:
+        assert "could not attach network" in str(e), str(e)
+    print("OK network attach failure surfaced")
+
+
+def test_install_command_failure_is_reported():
+    fd = FakeDocker(present=True, has_python=False, pm="apt-get")
+    orig = fd.__call__
+    def call(argv):
+        if argv[:2] == ["docker", "exec"] and "install" in " ".join(argv):
+            return subprocess.CompletedProcess(argv, 100, "", "E: Unable to locate package python3")
+        return orig(argv)
+    try:
+        with ContainerSession("reg/ubuntu:t", runner=call):
+            assert False
+    except SkipContainer as e:
+        assert "apt-get exited 100" in str(e) and "Unable to locate" in str(e), str(e)
+    print("OK install command failure (with output) surfaced")
+
+
+def test_skip_when_no_python_and_no_pm():
+    fd = FakeDocker(present=True, has_python=False, pm="")
+    try:
+        with ContainerSession("reg/distroless:t", runner=fd):
+            assert False
+    except SkipContainer:
+        assert not fd.ran("docker", "cp")
+    print("OK no python + no package manager -> skip")
+
+
+def test_no_install_flag_skips_without_trying():
+    fd = FakeDocker(present=True, has_python=False, pm="apt-get")
+    try:
+        with ContainerSession("reg/ubuntu:t", runner=fd, install_python=False):
+            assert False
+    except SkipContainer:
+        assert not any("install" in " ".join(c) for c in fd.calls)
+    print("OK --no-install-python skips without installing")
+
+
 if __name__ == "__main__":
     for fn in [test_absent_image_pulled_probe_copied_then_reaped, test_present_image_not_reaped,
-               test_keep_images_opt_out, test_skip_when_no_python, test_remote_inspector_parses_exec_json]:
+               test_keep_images_opt_out, test_skip_when_no_python, test_remote_inspector_parses_exec_json,
+               test_installs_python_when_missing, test_skip_when_no_python_and_no_pm,
+               test_no_install_flag_skips_without_trying,
+               test_network_attach_failure_is_reported, test_install_command_failure_is_reported]:
         fn()
     print("all container tests passed")

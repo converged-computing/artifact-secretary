@@ -10,7 +10,9 @@ devcontainer, so `-v` would mount nothing and the probe wouldn't be found.
 whose filesystem the daemon sees. Files go under /tmp (writable by any image
 user) and are read via PYTHONPATH=/tmp.
 
-Assumes a recent python3 in the image (else skip). Images this run pulls are
+If the image lacks python3, we try to install it via its package manager
+(temporary network, opt out with install_python=False); otherwise the image is
+skipped. Images this run pulls are
 reaped afterward; pre-existing images are left alone.
 """
 from __future__ import annotations
@@ -57,7 +59,10 @@ class ContainerSession:
     image: str
     runner: Runner = real_runner
     keep_images: bool = False
+    install_python: bool = True   # if the image lacks python3, try to install it
+    install_network: str = "bridge"  # docker network to attach for the install
     on_progress: Optional[Callable[[str], None]] = None
+    _install_detail: str = ""
 
     cid: str = ""
     pulled_by_us: bool = False
@@ -69,6 +74,55 @@ class ContainerSession:
     def _say(self, msg: str) -> None:
         if self.on_progress:
             self.on_progress(msg)
+
+    def _has_python(self) -> bool:
+        return self._sh(["docker", "exec", self.cid, "python3", "--version"]).returncode == 0
+
+    _PM_INSTALL = {
+        "apt-get": "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y python3",
+        "dnf": "dnf install -y python3",
+        "yum": "yum install -y python3",
+        "apk": "apk add --no-cache python3",
+        "zypper": "zypper --non-interactive install python3",
+    }
+
+    def _detect_pm(self) -> str:
+        probe = "||".join(f"command -v {pm}" for pm in self._PM_INSTALL) + "||true"
+        out = self._sh(["docker", "exec", "-u", "0", self.cid, "sh", "-c", probe]).stdout.strip()
+        found = out.splitlines()[0] if out else ""
+        return os.path.basename(found) if found else ""
+
+    def _try_install_python(self) -> bool:
+        """Install python3 with the image's package manager. Needs a package
+        manager and, briefly, network — so we attach a network only for the
+        install and detach afterwards, keeping the probe run sealed. Runs as root
+        (-u 0); the probe still runs as the image user."""
+        pm = self._detect_pm()
+        if not pm:
+            self._install_detail = "no supported package manager (apt-get/dnf/yum/apk/zypper) in image"
+            return False
+        self._say(f"python3 missing — installing via {pm} (temporary network on '{self.install_network}')")
+
+        conn = self._sh(["docker", "network", "connect", self.install_network, self.cid])
+        if conn.returncode != 0:
+            self._install_detail = (f"could not attach network '{self.install_network}': "
+                                    + (conn.stderr or conn.stdout or "").strip())
+            self._say("  " + self._install_detail)
+            return False
+        try:
+            res = self._sh(["docker", "exec", "-u", "0", self.cid, "sh", "-c", self._PM_INSTALL[pm]])
+        finally:
+            self._sh(["docker", "network", "disconnect", self.install_network, self.cid])
+
+        if res.returncode != 0:
+            tail = "\n".join((res.stderr or res.stdout or "").strip().splitlines()[-8:])
+            self._install_detail = f"{pm} exited {res.returncode}:\n{tail}"
+            self._say(f"  install failed (exit {res.returncode}); last output:\n{tail}")
+            return False
+        if not self._has_python():
+            self._install_detail = f"{pm} reported success but python3 is still not on PATH"
+            return False
+        return True
 
     def _pull(self) -> int:
         self._say(f"pulling {self.image} ...")
@@ -105,9 +159,14 @@ class ContainerSession:
             raise SkipContainer(f"run failed: {run.stderr.strip()}")
         self.cid = run.stdout.strip()
 
-        if self._sh(["docker", "exec", self.cid, "python3", "--version"]).returncode != 0:
-            self.__exit__(None, None, None)
-            raise SkipContainer("no usable python3 in image")
+        if not self._has_python():
+            if not (self.install_python and self._try_install_python()):
+                detail = self._install_detail
+                self.__exit__(None, None, None)
+                msg = "no usable python3 in image"
+                if self.install_python:
+                    msg += " — " + (detail or "could not install one")
+                raise SkipContainer(msg)
 
         self._say("copying inspector into container")
         self._copy_probe()
