@@ -1,7 +1,7 @@
-"""artifact-secretary command line. Client code: it selects a model backend at
-runtime (--backend) and imports only that backend's runner, so you don't need
-Google's ADK installed to run Claude, or vice versa. A missing backend package
-fails immediately, with a clear message, when that backend is selected."""
+"""artifact-secretary command line. Client code: selects a model backend at
+runtime (--backend) and imports only that backend's runner. Two subcommands:
+`profile` (characterize a catalog into a manifest tree) and `list` (enumerate
+GHCR images/tags for an org/repo to feed the catalog)."""
 from __future__ import annotations
 
 import argparse
@@ -11,11 +11,10 @@ import anyio
 
 from ..framework.core import AgentRunner, run_task
 from ..tasks.profile import ProfileTask
+from ..model.manifest import save_tree
 
 
 def make_runner(backend: str, model: str | None) -> AgentRunner:
-    """Pick a runner by name. Each backend's SDK is imported only when chosen,
-    and its absence surfaces here as a clear install hint."""
     if backend == "claude":
         try:
             from ..runner.sdk import SDKRunner
@@ -37,21 +36,7 @@ def make_runner(backend: str, model: str | None) -> AgentRunner:
     raise SystemExit(f"unknown backend {backend!r} (choose: claude, gemini, aws)")
 
 
-def main():
-    ap = argparse.ArgumentParser(prog="artifact-secretary")
-    sub = ap.add_subparsers(dest="cmd", required=True)
-
-    p = sub.add_parser("profile", help="characterize a catalog of containers")
-    p.add_argument("--backend", choices=["claude", "gemini", "aws"], default="claude",
-                   help="model backend (default: claude)")
-    p.add_argument("--model", default=None, help="model name for the chosen backend")
-    p.add_argument("--manifest", help="saved run manifest JSON (skip conversation)")
-    p.add_argument("--catalog", nargs="*", help="image refs (skip conversation)")
-    p.add_argument("--goal", default="Characterize each image's build variants.")
-    p.add_argument("--keep-images", action="store_true")
-    p.add_argument("--out", default="lookup.json")
-    args = ap.parse_args()
-
+def _cmd_profile(args):
     manifest = None
     if args.manifest:
         manifest = json.load(open(args.manifest))
@@ -61,8 +46,43 @@ def main():
     runner = make_runner(args.backend, args.model)
     outcome = anyio.run(run_task, ProfileTask(), runner, manifest)
     if outcome.result is not None:
-        outcome.result.save(args.out)
-        print(f"\nwrote {args.out} ({len(outcome.result.entries)} entries)")
+        paths = save_tree(outcome.result, args.out_dir)
+        print(f"\nwrote {len(paths)} manifest(s) under {args.out_dir}/")
+        for p in paths:
+            print(f"  {p}")
+
+
+def _cmd_list(args):
+    from ..catalog import list_ghcr
+    refs = list_ghcr(args.org, args.repo, tuple(args.exclude))
+    for ref in refs:
+        print(ref)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="artifact-secretary")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("profile", help="characterize a catalog of containers into a manifest tree")
+    p.add_argument("--backend", choices=["claude", "gemini", "aws"], default="claude")
+    p.add_argument("--model", default=None, help="model name for the chosen backend")
+    p.add_argument("--manifest", help="saved run manifest JSON (skip conversation)")
+    p.add_argument("--catalog", nargs="*", help="image refs (skip conversation); pass one to run a single image")
+    p.add_argument("--goal", default="Characterize each image's build variants.")
+    p.add_argument("--keep-images", action="store_true")
+    p.add_argument("--out-dir", default="manifests",
+                   help="root of the manifest tree (registry/org/repo/tag/manifest.json)")
+    p.set_defaults(func=_cmd_profile)
+
+    l = sub.add_parser("list", help="list GHCR images/tags for an org (optionally one repo)")
+    l.add_argument("--org", required=True)
+    l.add_argument("--repo", default=None, help="restrict to packages linked to this repo")
+    l.add_argument("--exclude", nargs="*", default=["arm", "aarch64"],
+                   help="drop tags containing any of these substrings (default: arm builds)")
+    l.set_defaults(func=_cmd_list)
+
+    args = ap.parse_args()
+    args.func(args)
 
 
 if __name__ == "__main__":

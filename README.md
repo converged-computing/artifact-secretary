@@ -63,6 +63,8 @@ PY
 
 ## Usage
 
+Here is a one-off example:
+
 ```bash
 artifact-secretary profile --backend aws \
   --model us.anthropic.claude-sonnet-5 \
@@ -81,6 +83,13 @@ from secretary import Target, Inspector, derive_capability
 insp = Inspector(Target("/opt/lammps"))
 elf = insp.inspect_elf("/build/lmp")
 cap = derive_capability(elf["needed"], elf["rpath"])
+```
+
+Here is how to use the artifact secretary to list packages and tags from GitHub packages:
+
+```bash
+export GITHUB_TOKEN=...   # needs read:packages
+artifact-secretary list --org converged-computing --repo performance-study
 ```
 
 
