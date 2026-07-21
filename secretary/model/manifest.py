@@ -86,3 +86,55 @@ def _artifact_from_dict(d: dict) -> Artifact:
     a.variants = [Variant(**v) for v in d.get("variants", [])]
     a.evidence = d.get("evidence", {})
     return a
+
+
+# --- writing a per-image manifest tree (registry/org/repo/tag/manifest.json) ---
+
+import os as _os
+import re as _re
+
+
+def _sanitize(part: str) -> str:
+    """Make one path segment safe (tags/repos can contain odd characters)."""
+    return _re.sub(r"[^A-Za-z0-9._-]", "_", part) or "_"
+
+
+def ref_to_parts(ref: str) -> list[str]:
+    """Split an image reference into path segments + a final tag segment, e.g.
+    'ghcr.io/converged-computing/lammps-reax:zen4-reax'
+        -> ['ghcr.io','converged-computing','lammps-reax','zen4-reax'].
+    Digest refs use 'sha256-<short>' as the tag segment."""
+    tag = None
+    if "@" in ref:
+        name, digest = ref.split("@", 1)
+        if ":" in name.rsplit("/", 1)[-1]:
+            name, tag = name.rsplit(":", 1)
+        else:
+            tag = "sha256-" + digest.split(":")[-1][:12]
+    else:
+        last = ref.rsplit("/", 1)[-1]
+        if ":" in last:
+            name, tag = ref.rsplit(":", 1)
+        else:
+            name, tag = ref, "latest"
+    return [_sanitize(x) for x in name.split("/")] + [_sanitize(tag)]
+
+
+def entry_document(version: str, entry: "LookupEntry") -> dict:
+    """A self-contained manifest for one image."""
+    return {"version": version, "entry": asdict(entry)}
+
+
+def save_tree(lookup: "ManifestLookup", root: str) -> list[str]:
+    """Write one manifest.json per image under root, organized by the URI:
+    root/<registry>/<org>/<repo>/<tag>/manifest.json. Returns the paths written."""
+    written = []
+    for entry in lookup.entries.values():
+        parts = ref_to_parts(entry.reproduce.reference)
+        d = _os.path.join(root, *parts)
+        _os.makedirs(d, exist_ok=True)
+        path = _os.path.join(d, "manifest.json")
+        with open(path, "w") as f:
+            f.write(json.dumps(entry_document(lookup.version, entry), indent=2, sort_keys=True))
+        written.append(path)
+    return written
