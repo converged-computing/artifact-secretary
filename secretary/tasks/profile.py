@@ -65,6 +65,10 @@ class ProfileTask(Task):
                 sess = self.session_factory(ref, keep)
                 if hasattr(sess, "on_progress"):
                     sess.on_progress = console.phase
+                if hasattr(sess, "install_python"):
+                    sess.install_python = bool(manifest.get("install_python", True))
+                if hasattr(sess, "install_network"):
+                    sess.install_network = manifest.get("install_network", "bridge")
                 with sess as backend:
                     entry.reproduce.digest = getattr(sess, "digest", "") or ""
                     entry.reproduce.pulled_by_us = getattr(sess, "pulled_by_us", False)

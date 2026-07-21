@@ -41,7 +41,9 @@ def _cmd_profile(args):
     if args.manifest:
         manifest = json.load(open(args.manifest))
     elif args.catalog:
-        manifest = {"catalog": args.catalog, "goal": args.goal, "keep_images": args.keep_images}
+        manifest = {"catalog": args.catalog, "goal": args.goal, "keep_images": args.keep_images,
+                    "install_python": args.install_python,
+                    "install_network": args.install_network}
 
     runner = make_runner(args.backend, args.model)
     outcome = anyio.run(run_task, ProfileTask(), runner, manifest)
@@ -53,8 +55,12 @@ def _cmd_profile(args):
 
 
 def _cmd_list(args):
+    import sys
     from ..catalog import list_ghcr
-    refs = list_ghcr(args.org, args.repo, tuple(args.exclude))
+    arch = "" if args.all_arches else args.arch
+    # progress to stderr so stdout stays clean image refs (pipeable into profile)
+    refs = list_ghcr(args.org, args.repo, arch=arch, exclude=tuple(args.exclude),
+                     on_note=lambda m: print(m, file=sys.stderr))
     for ref in refs:
         print(ref)
 
@@ -70,15 +76,23 @@ def main():
     p.add_argument("--catalog", nargs="*", help="image refs (skip conversation); pass one to run a single image")
     p.add_argument("--goal", default="Characterize each image's build variants.")
     p.add_argument("--keep-images", action="store_true")
+    p.add_argument("--no-install-python", dest="install_python", action="store_false",
+                   help="do not install python3 into images that lack it (skip them instead)")
+    p.add_argument("--install-network", default="bridge",
+                   help="docker network to attach transiently when installing python3 (default: bridge)")
+    p.set_defaults(install_python=True)
     p.add_argument("--out-dir", default="manifests",
                    help="root of the manifest tree (registry/org/repo/tag/manifest.json)")
     p.set_defaults(func=_cmd_profile)
 
     l = sub.add_parser("list", help="list GHCR images/tags for an org (optionally one repo)")
     l.add_argument("--org", required=True)
-    l.add_argument("--repo", default=None, help="restrict to packages linked to this repo")
-    l.add_argument("--exclude", nargs="*", default=["arm", "aarch64"],
-                   help="drop tags containing any of these substrings (default: arm builds)")
+    l.add_argument("--repo", default=None, help="restrict to packages published to this repo")
+    l.add_argument("--arch", default="amd64",
+                   help="keep only tags that provide this linux arch (default: amd64)")
+    l.add_argument("--all-arches", action="store_true", help="do not filter by architecture")
+    l.add_argument("--exclude", nargs="*", default=[],
+                   help="also drop tags containing any of these substrings")
     l.set_defaults(func=_cmd_list)
 
     args = ap.parse_args()
