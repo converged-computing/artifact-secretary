@@ -19,6 +19,7 @@ def __getattr__(name):
     if module is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     from importlib import import_module
+
     return getattr(import_module(module, __name__), name)
 
 

@@ -1,6 +1,7 @@
 """Small terminal-output helper: a bit of color and structure for the live
 trace. Colors switch off automatically when stdout isn't a TTY (piped, captured
 in tests) or when NO_COLOR is set, so output stays clean everywhere."""
+
 from __future__ import annotations
 
 import os

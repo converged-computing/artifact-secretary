@@ -8,6 +8,7 @@ every path the tools touch is resolved and checked to stay under the root, and
 only read operations are exposed. Even inside a sealed container this matters —
 it keeps the agent from wandering out of the region we meant to give it.
 """
+
 from __future__ import annotations
 
 import os

@@ -12,6 +12,7 @@ so adding Gemini is a contained job: convert our ToolSpecs to ADK function tools
 (carrying the same read/action confirmation gate) and drive ADK's runner. None
 of ProfileTask / tools.py / the container code changes.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -44,6 +45,7 @@ def _to_adk_tool(ts: ToolSpec, confirm_fn: ConfirmFn) -> FunctionTool:
     SDKRunner) and adapts our handler's Anthropic-style {"content":[...]} return
     into the plain value ADK expects a tool to return.
     """
+
     async def _invoke(**kwargs) -> Any:
         if ts.kind == "action" and ts.confirm and not confirm_fn(ts.name, kwargs):
             return "cancelled by user"
@@ -54,45 +56,64 @@ def _to_adk_tool(ts: ToolSpec, confirm_fn: ConfirmFn) -> FunctionTool:
         except (KeyError, IndexError, TypeError):
             return result
         try:
-            return json.loads(text)   # most of our tools emit JSON
+            return json.loads(text)  # most of our tools emit JSON
         except (ValueError, TypeError):
             return text
 
     # give ADK a real signature + docstring to introspect
     params = [
-        inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY,
-                          annotation=_PY_TYPE.get(typ, str))
+        inspect.Parameter(
+            name, inspect.Parameter.KEYWORD_ONLY, annotation=_PY_TYPE.get(typ, str)
+        )
         for name, typ in ts.input_schema.items()
     ]
     _invoke.__name__ = ts.name
     _invoke.__doc__ = ts.description
-    _invoke.__signature__ = inspect.Signature(params)  # TODO: confirm ADK reads __signature__ (vs real params)
-    _invoke.__annotations__ = {n: _PY_TYPE.get(t, str) for n, t in ts.input_schema.items()}
-    return FunctionTool(_invoke)  # TODO: confirm FunctionTool(func) is the current constructor
+    _invoke.__signature__ = inspect.Signature(
+        params
+    )  # TODO: confirm ADK reads __signature__ (vs real params)
+    _invoke.__annotations__ = {
+        n: _PY_TYPE.get(t, str) for n, t in ts.input_schema.items()
+    }
+    return FunctionTool(
+        _invoke
+    )  # TODO: confirm FunctionTool(func) is the current constructor
 
 
 class ADKRunner(AgentRunner):
     """AgentRunner backed by Google ADK / Gemini. Same interface as SDKRunner."""
 
-    def __init__(self, model: str = "gemini-2.5-flash", app_name: str = "artifact-secretary",
-                 verbose: bool = True):
+    def __init__(
+        self,
+        model: str = "gemini-2.5-flash",
+        app_name: str = "artifact-secretary",
+        verbose: bool = True,
+    ):
         self.model = model
         self.app_name = app_name
         self.verbose = verbose
 
-    async def _run_once(self, instruction: str, user_prompt: str, adk_tools: list) -> list[str]:
-        agent = Agent(name="secretary", model=self.model,
-                      instruction=instruction, tools=adk_tools)
+    async def _run_once(
+        self, instruction: str, user_prompt: str, adk_tools: list
+    ) -> list[str]:
+        agent = Agent(
+            name="secretary", model=self.model, instruction=instruction, tools=adk_tools
+        )
         session_service = InMemorySessionService()
         # TODO: confirm create_session is sync vs async in the installed ADK
         session = session_service.create_session(
-            app_name=self.app_name, user_id="local", session_id="s1")
-        runner = Runner(agent=agent, app_name=self.app_name, session_service=session_service)
+            app_name=self.app_name, user_id="local", session_id="s1"
+        )
+        runner = Runner(
+            agent=agent, app_name=self.app_name, session_service=session_service
+        )
 
         msg = types.Content(role="user", parts=[types.Part(text=user_prompt)])
         texts: list[str] = []
         # TODO: confirm run_async signature + how final text is surfaced on events
-        async for event in runner.run_async(user_id="local", session_id=session.id, new_message=msg):
+        async for event in runner.run_async(
+            user_id="local", session_id=session.id, new_message=msg
+        ):
             if self.verbose:
                 print(event)
             content = getattr(event, "content", None)
@@ -102,8 +123,13 @@ class ADKRunner(AgentRunner):
                         texts.append(part.text)
         return texts
 
-    async def run_agent(self, system_prompt: str, user_prompt: str,
-                        tools: list[ToolSpec], confirm_fn: ConfirmFn) -> Any:
+    async def run_agent(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        tools: list[ToolSpec],
+        confirm_fn: ConfirmFn,
+    ) -> Any:
         adk_tools = [_to_adk_tool(t, confirm_fn) for t in tools]
         await self._run_once(system_prompt, user_prompt, adk_tools)
         # results are collected via the tools' side effects (e.g. record_artifact
@@ -122,17 +148,26 @@ class ADKRunner(AgentRunner):
             return "setup finalized"
 
         finalize = FunctionTool(finalize_setup)
-        agent = Agent(name="setup", model=self.model,
-                      instruction=task.setup_system_prompt(), tools=[finalize])
+        agent = Agent(
+            name="setup",
+            model=self.model,
+            instruction=task.setup_system_prompt(),
+            tools=[finalize],
+        )
         session_service = InMemorySessionService()
         session = session_service.create_session(
-            app_name=self.app_name, user_id="local", session_id="setup")
-        runner = Runner(agent=agent, app_name=self.app_name, session_service=session_service)
+            app_name=self.app_name, user_id="local", session_id="setup"
+        )
+        runner = Runner(
+            agent=agent, app_name=self.app_name, session_service=session_service
+        )
 
         prompt = "Let's set up this task. Ask me what you need."
         while "manifest" not in captured:
             msg = types.Content(role="user", parts=[types.Part(text=prompt)])
-            async for event in runner.run_async(user_id="local", session_id=session.id, new_message=msg):
+            async for event in runner.run_async(
+                user_id="local", session_id=session.id, new_message=msg
+            ):
                 if self.verbose:
                     print(event)
             if "manifest" in captured:

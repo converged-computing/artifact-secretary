@@ -1,2 +1,3 @@
-from .session import ContainerSession, SkipContainer, real_runner, Runner
+from .docker import Docker
 from .remote import RemoteInspector
+from .session import ContainerSession, Runner, SkipContainer

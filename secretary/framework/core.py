@@ -12,6 +12,7 @@ what a valid result is. Submitting a job, profiling a container, etc. are all
 just Tasks — some read-only, some with an action tool that gates on user
 confirmation, some chained into a pipeline.
 """
+
 from __future__ import annotations
 
 import json
@@ -28,8 +29,8 @@ class ToolSpec:
     description: str
     input_schema: dict
     handler: Callable[[dict], Awaitable[dict]]
-    kind: str = "read"          # "read" | "action"
-    confirm: bool = False       # if action: pause for user approval before running
+    kind: str = "read"  # "read" | "action"
+    confirm: bool = False  # if action: pause for user approval before running
 
 
 # confirm_fn(tool_name, args) -> bool. Supplied by the runtime (CLI prompt, test
@@ -67,8 +68,9 @@ class Task(ABC):
     def execute_system_prompt(self, manifest: dict) -> str:
         """Instruction for the execution agent."""
 
-    async def execute(self, runner: "AgentRunner", manifest: dict,
-                      confirm_fn: "ConfirmFn") -> Any:
+    async def execute(
+        self, runner: "AgentRunner", manifest: dict, confirm_fn: "ConfirmFn"
+    ) -> Any:
         """Run the task. Default: a single agent run over the built tools. Tasks
         that iterate (e.g. profile a catalog) override this and call
         runner.run_agent() once per item."""
@@ -76,7 +78,8 @@ class Task(ABC):
         return await runner.run_agent(
             system_prompt=self.execute_system_prompt(manifest),
             user_prompt=manifest.get("goal", "Complete the task."),
-            tools=tools, confirm_fn=confirm_fn,
+            tools=tools,
+            confirm_fn=confirm_fn,
         )
 
     def validate_result(self, result: Any) -> None:
@@ -93,8 +96,13 @@ class AgentRunner(Protocol):
         """Run the seeded, adaptive setup conversation; return the manifest."""
         ...
 
-    async def run_agent(self, system_prompt: str, user_prompt: str,
-                        tools: list[ToolSpec], confirm_fn: "ConfirmFn") -> Any:
+    async def run_agent(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        tools: list[ToolSpec],
+        confirm_fn: "ConfirmFn",
+    ) -> Any:
         """One agent run with a fixed toolset; action tools gate on confirm_fn."""
         ...
 

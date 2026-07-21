@@ -1,11 +1,12 @@
 """Runs INSIDE a container via `docker exec python3 -m secretary.container.probe
 <cmd> <json-args>`. Runs the same Inspector over the container root and prints
 JSON. Bind-mounted in with pyelftools; needs only a recent python3 in the image."""
+
 import json
 import sys
 
-from ..inspection.target import Target
 from ..inspection.inspector import Inspector
+from ..inspection.target import Target
 
 
 def main(argv=None):

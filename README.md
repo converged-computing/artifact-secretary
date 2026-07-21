@@ -90,6 +90,18 @@ Here is how to use the artifact secretary to list packages and tags from GitHub 
 ```bash
 export GITHUB_TOKEN=...   # needs read:packages
 artifact-secretary list --org converged-computing --repo performance-study
+# And pipe to file, and manually clean
+artifact-secretary list --org conver
+```
+
+And then derive each one:
+
+```bash
+for repo in $(cat repos.txt)
+  do
+    artifact-secretary profile --backend aws --model us.anthropic.claude-sonnet-5 \
+      --catalog "$repo" --out-dir manifests --allow-network --keep-images
+done
 ```
 
 

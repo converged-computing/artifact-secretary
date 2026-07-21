@@ -1,182 +1,165 @@
-"""ContainerSession: run an image as a sealed, sleeping container, copy our
-(pure-Python) inspection code plus pyelftools into it, and expose a
-RemoteInspector that drives that code via `docker exec`.
+"""Run an image as a sealed, sleeping container, copy our inspection code (and,
+when needed, a python to run it) into it, and hand back a RemoteInspector that
+drives that code via `docker exec`.
 
-The code is delivered with `docker cp`, not a bind mount. Under
-docker-outside-of-docker (our devcontainer talks to the host daemon), a bind
-mount's source path is resolved on the HOST filesystem, not inside the
-devcontainer, so `-v` would mount nothing and the probe wouldn't be found.
-`docker cp` streams the files through the daemon, so it works regardless of
-whose filesystem the daemon sees. Files go under /tmp (writable by any image
-user) and are read via PYTHONPATH=/tmp.
+Everything is delivered with `docker cp`, not a bind mount: under
+docker-outside-of-docker the daemon resolves a bind-mount source on the host, not
+in our devcontainer, so `-v` would mount nothing. Files land in /tmp.
 
-If the image lacks python3, we try to install it via its package manager
-(temporary network, opt out with install_python=False); otherwise the image is
-skipped. Images this run pulls are
-reaped afterward; pre-existing images are left alone.
+We don't rely on the image's python. If it's missing or older than we need, we
+bring our own — a relocatable standalone CPython copied in (see runtime.py). That
+needs no network in the container, no root, no package manager, so it works in
+the default sealed posture. --allow-network only affects the container's network,
+which the inspection itself never uses.
+
+Pulled images are reaped on exit; images already present are left alone.
 """
+
 from __future__ import annotations
 
 import os
-import subprocess
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
 import elftools
 
-from .remote import RemoteInspector, PROBE_PYTHONPATH
+from ..command import run_subprocess
+from . import runtime
+from .docker import Docker
+from .remote import PROBE_PYTHONPATH, RemoteInspector
 
-Runner = Callable[[list], subprocess.CompletedProcess]
-
-
-def real_runner(argv: list) -> subprocess.CompletedProcess:
-    return subprocess.run(argv, capture_output=True, text=True)
+Runner = Callable[[Sequence[str]], object]
 
 
 class SkipContainer(Exception):
-    """Raised when we can't run our inspector in the image (e.g. no python3)."""
-
-
-def _run_flags() -> list:
-    # sealed: no network, no privileges, image's own USER (no --user, matching
-    # k8s), no docker socket. entrypoint replaced with sleep so image code never runs.
-    return ["--rm", "-d", "--network=none", "--cap-drop=ALL",
-            "--security-opt", "no-new-privileges", "--entrypoint", "sleep"]
-
-
-def _package_dir() -> str:
-    # .../secretary (this file is .../secretary/container/session.py). A local
-    # read, so this is reliable even for editable installs.
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def _elftools_dir() -> str:
-    return os.path.dirname(os.path.abspath(elftools.__file__))
+    """We can't run our inspector in this image (e.g. no usable python)."""
 
 
 @dataclass
 class ContainerSession:
     image: str
-    runner: Runner = real_runner
+    runner: Runner = run_subprocess
     keep_images: bool = False
-    install_python: bool = True   # if the image lacks python3, try to install it
-    install_network: str = "bridge"  # docker network to attach for the install
+    install_python: bool = True  # bring our own python when the image's is unusable
+    allow_network: bool = False  # run the container on a network (posture only)
+    network: str = "bridge"
     on_progress: Optional[Callable[[str], None]] = None
-    _install_detail: str = ""
 
     cid: str = ""
     pulled_by_us: bool = False
     digest: str = ""
+    install_detail: str = ""  # why we couldn't provide a python, for the skip reason
+    probe_python: str = (
+        "python3"  # interpreter the probe runs under (image's, or bundled)
+    )
 
-    def _sh(self, argv: list) -> subprocess.CompletedProcess:
-        return self.runner(argv)
+    def __post_init__(self):
+        self.docker = Docker(self.runner)
 
-    def _say(self, msg: str) -> None:
+    @property
+    def package_dir(self) -> str:
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    @property
+    def elftools_dir(self) -> str:
+        return os.path.dirname(os.path.abspath(elftools.__file__))
+
+    @property
+    def run_flags(self) -> list:
+        net = self.network if self.allow_network else "none"
+        flags = ["--rm", "-d", f"--network={net}"]
+        if not self.allow_network:
+            flags += ["--cap-drop=ALL", "--security-opt", "no-new-privileges"]
+        return flags + ["--entrypoint", "sleep"]
+
+    def report(self, msg: str) -> None:
         if self.on_progress:
             self.on_progress(msg)
 
-    def _has_python(self) -> bool:
-        return self._sh(["docker", "exec", self.cid, "python3", "--version"]).returncode == 0
+    def probe_runs_under(self, python: str) -> bool:
+        """Can this interpreter actually import and run our probe? Catches a
+        missing python, one too old, or one whose stdlib can't parse our copied
+        deps (pyelftools uses `match`, so it needs 3.10+)."""
+        r = self.docker.execute(
+            self.cid,
+            [python, "-c", "import secretary.container.probe"],
+            env={"PYTHONPATH": PROBE_PYTHONPATH},
+        )
+        return r.ok
 
-    _PM_INSTALL = {
-        "apt-get": "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y python3",
-        "dnf": "dnf install -y python3",
-        "yum": "yum install -y python3",
-        "apk": "apk add --no-cache python3",
-        "zypper": "zypper --non-interactive install python3",
-    }
+    def container_arch(self) -> str:
+        r = self.docker.execute(self.cid, ["uname", "-m"])
+        return runtime.normalize_arch(r.text if r.ok else "")
 
-    def _detect_pm(self) -> str:
-        probe = "||".join(f"command -v {pm}" for pm in self._PM_INSTALL) + "||true"
-        out = self._sh(["docker", "exec", "-u", "0", self.cid, "sh", "-c", probe]).stdout.strip()
-        found = out.splitlines()[0] if out else ""
-        return os.path.basename(found) if found else ""
-
-    def _try_install_python(self) -> bool:
-        """Install python3 with the image's package manager. Needs a package
-        manager and, briefly, network — so we attach a network only for the
-        install and detach afterwards, keeping the probe run sealed. Runs as root
-        (-u 0); the probe still runs as the image user."""
-        pm = self._detect_pm()
-        if not pm:
-            self._install_detail = "no supported package manager (apt-get/dnf/yum/apk/zypper) in image"
-            return False
-        self._say(f"python3 missing — installing via {pm} (temporary network on '{self.install_network}')")
-
-        conn = self._sh(["docker", "network", "connect", self.install_network, self.cid])
-        if conn.returncode != 0:
-            self._install_detail = (f"could not attach network '{self.install_network}': "
-                                    + (conn.stderr or conn.stdout or "").strip())
-            self._say("  " + self._install_detail)
-            return False
+    def provide_python(self) -> bool:
+        """docker cp a bundled standalone python in and point the probe at it."""
+        arch = self.container_arch()
         try:
-            res = self._sh(["docker", "exec", "-u", "0", self.cid, "sh", "-c", self._PM_INSTALL[pm]])
-        finally:
-            self._sh(["docker", "network", "disconnect", self.install_network, self.cid])
-
-        if res.returncode != 0:
-            tail = "\n".join((res.stderr or res.stdout or "").strip().splitlines()[-8:])
-            self._install_detail = f"{pm} exited {res.returncode}:\n{tail}"
-            self._say(f"  install failed (exit {res.returncode}); last output:\n{tail}")
+            local = runtime.fetch_python(arch)
+        except Exception as e:
+            self.install_detail = f"could not fetch a standalone python ({e})"
             return False
-        if not self._has_python():
-            self._install_detail = f"{pm} reported success but python3 is still not on PATH"
+        src = os.path.join(local, "python")
+        if not self.docker.copy(src, f"{self.cid}:{runtime.BUNDLED_ROOT}").ok:
+            self.install_detail = "could not copy the bundled python into the container"
             return False
+        self.probe_python = f"{runtime.BUNDLED_ROOT}/bin/python3"
+        self.report(f"using a bundled python3 ({runtime.PBS_VERSION})")
         return True
 
-    def _pull(self) -> int:
-        self._say(f"pulling {self.image} ...")
-        # With a progress callback and the real runner, let docker's own pull
-        # output stream to the terminal (layer bars) instead of being captured.
-        if self.on_progress and self.runner is real_runner:
-            return subprocess.run(["docker", "pull", self.image]).returncode
-        return self._sh(["docker", "pull", self.image]).returncode
-
-    def _image_present(self) -> bool:
-        return self._sh(["docker", "image", "inspect", self.image]).returncode == 0
-
-    def _resolve_digest(self) -> str:
-        p = self._sh(["docker", "inspect", "--format", "{{index .RepoDigests 0}}", self.image])
-        return p.stdout.strip() if p.returncode == 0 else ""
-
-    def _copy_probe(self) -> None:
-        # deliver the package + pyelftools under PROBE_PYTHONPATH (/tmp) so
-        # `python3 -m secretary.container.probe` resolves inside the container.
-        for src in (_package_dir(), _elftools_dir()):
+    def copy_probe(self) -> None:
+        for src in (self.package_dir, self.elftools_dir):
             dest = f"{self.cid}:{PROBE_PYTHONPATH}/{os.path.basename(src)}"
-            if self._sh(["docker", "cp", src, dest]).returncode != 0:
+            if not self.docker.copy(src, dest).ok:
                 raise SkipContainer(f"could not copy inspector into container: {src}")
 
+    def start(self) -> None:
+        net = self.network if self.allow_network else "none"
+        self.report(
+            f"starting container ({'network ' + net if self.allow_network else 'sealed, no network'})"
+        )
+        run = self.docker.run_container(self.image, self.run_flags, ["infinity"])
+        if not run.ok:
+            raise SkipContainer(f"run failed: {run.text}")
+        self.cid = run.text
+
+    def ensure_python(self) -> None:
+        # requires the probe code to already be copied in (see __enter__)
+        if self.probe_runs_under("python3"):
+            return  # the image's own python can run the probe
+        if (
+            self.install_python
+            and self.provide_python()
+            and self.probe_runs_under(self.probe_python)
+        ):
+            return  # brought our own that can
+        why = self.install_detail or (
+            "image python can't run the inspector (missing, too old, or incompatible)"
+            if self.install_python
+            else "image python unusable and bundling disabled"
+        )
+        self.__exit__(None, None, None)
+        raise SkipContainer(f"no usable python3 in image — {why}")
+
     def __enter__(self) -> RemoteInspector:
-        self.pulled_by_us = not self._image_present()
-        if self.pulled_by_us and self._pull() != 0:
-            raise SkipContainer(f"pull failed: {self.image}")
-        self.digest = self._resolve_digest()
+        self.pulled_by_us = not self.docker.has_image(self.image)
+        if self.pulled_by_us:
+            self.report(f"pulling {self.image} ...")
+            if not self.docker.pull(self.image).ok:
+                raise SkipContainer(f"pull failed: {self.image}")
+        self.digest = self.docker.resolve_digest(self.image)
 
-        self._say("starting sealed container")
-        run = self._sh(["docker", "run"] + _run_flags() + [self.image, "infinity"])
-        if run.returncode != 0:
-            raise SkipContainer(f"run failed: {run.stderr.strip()}")
-        self.cid = run.stdout.strip()
-
-        if not self._has_python():
-            if not (self.install_python and self._try_install_python()):
-                detail = self._install_detail
-                self.__exit__(None, None, None)
-                msg = "no usable python3 in image"
-                if self.install_python:
-                    msg += " — " + (detail or "could not install one")
-                raise SkipContainer(msg)
-
-        self._say("copying inspector into container")
-        self._copy_probe()
-        self._say("inspecting")
-        return RemoteInspector(self.cid, self.runner)
+        self.start()
+        self.report("copying inspector into container")
+        self.copy_probe()
+        self.ensure_python()  # pick an interpreter that can actually run it
+        self.report("inspecting")
+        return RemoteInspector(self.cid, self.docker, self.probe_python)
 
     def __exit__(self, *exc) -> None:
         if self.cid:
-            self._sh(["docker", "rm", "-f", self.cid])
+            self.docker.remove_container(self.cid)
             self.cid = ""
         if self.pulled_by_us and not self.keep_images:
-            self._say(f"removing pulled image {self.image}")
-            self._sh(["docker", "rmi", self.image])
+            self.report(f"removing pulled image {self.image}")
+            self.docker.remove_image(self.image)
