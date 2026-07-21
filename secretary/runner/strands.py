@@ -11,6 +11,7 @@ installed version are marked TODO. Strands tools are plain Python functions and
 it exposes tool calls, so our ToolSpec -> function conversion (with the
 read/action confirm gate) maps over directly.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -19,7 +20,9 @@ import json
 from typing import Any
 
 from strands import Agent
-from strands.models import BedrockModel  # TODO: confirm class name in the installed version
+from strands.models import (
+    BedrockModel,
+)  # TODO: confirm class name in the installed version
 
 from ..framework.core import AgentRunner, ConfirmFn, Task, ToolSpec
 
@@ -69,31 +72,42 @@ def _to_strands_tool(ts: ToolSpec, confirm_fn: ConfirmFn, on_call=None):
 
     _invoke.__name__ = ts.name
     _invoke.__doc__ = ts.description
-    _invoke.__signature__ = inspect.Signature([
-        inspect.Parameter(n, inspect.Parameter.KEYWORD_ONLY, annotation=_PY_TYPE.get(t, str))
-        for n, t in ts.input_schema.items()
-    ])
-    _invoke.__annotations__ = {n: _PY_TYPE.get(t, str) for n, t in ts.input_schema.items()}
+    _invoke.__signature__ = inspect.Signature(
+        [
+            inspect.Parameter(
+                n, inspect.Parameter.KEYWORD_ONLY, annotation=_PY_TYPE.get(t, str)
+            )
+            for n, t in ts.input_schema.items()
+        ]
+    )
+    _invoke.__annotations__ = {
+        n: _PY_TYPE.get(t, str) for n, t in ts.input_schema.items()
+    }
     return tool(_invoke)  # TODO: confirm strands.tool(func) call form
 
 
 class StrandsRunner(AgentRunner):
     """AgentRunner backed by Strands + Bedrock. Same interface as SDKRunner."""
 
-    def __init__(self, model: str | None = None, region: str = "us-east-1", verbose: bool = True):
-        self.model = model          # None -> Strands' default (an Anthropic model on Bedrock)
+    def __init__(
+        self, model: str | None = None, region: str = "us-east-1", verbose: bool = True
+    ):
+        self.model = model  # None -> Strands' default (an Anthropic model on Bedrock)
         self.region = region
         self.verbose = verbose
 
     def _model(self):
         if self.model is None:
             return None
-        return BedrockModel(model_id=self.model, region_name=self.region)  # TODO: confirm kwargs
+        return BedrockModel(
+            model_id=self.model, region_name=self.region
+        )  # TODO: confirm kwargs
 
     def _render(self, event) -> None:
         """Stream assistant text (dimmed). Tool lines print from the wrapper."""
         if self.verbose and isinstance(event, dict) and event.get("data"):
             from .. import console
+
             console.think(event["data"])
             self._mid_line = not event["data"].endswith("\n")
 
@@ -101,18 +115,28 @@ class StrandsRunner(AgentRunner):
         if not self.verbose:
             return
         from .. import console
+
         if getattr(self, "_mid_line", False):
             print()  # close a partial line of streamed text before the op line
             self._mid_line = False
         console.op(name, _op_detail(name, kwargs))
 
-    async def run_agent(self, system_prompt: str, user_prompt: str,
-                        tools: list[ToolSpec], confirm_fn: ConfirmFn) -> Any:
+    async def run_agent(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        tools: list[ToolSpec],
+        confirm_fn: ConfirmFn,
+    ) -> Any:
         self._mid_line = False
-        kwargs = {"system_prompt": system_prompt,
-                  "tools": [_to_strands_tool(t, confirm_fn, on_call=self._trace) for t in tools],
-                  # silence Strands' own stdout printer so it doesn't double with ours
-                  "callback_handler": None}
+        kwargs = {
+            "system_prompt": system_prompt,
+            "tools": [
+                _to_strands_tool(t, confirm_fn, on_call=self._trace) for t in tools
+            ],
+            # silence Strands' own stdout printer so it doesn't double with ours
+            "callback_handler": None,
+        }
         model = self._model()
         if model is not None:
             kwargs["model"] = model
@@ -120,7 +144,9 @@ class StrandsRunner(AgentRunner):
 
         stream = getattr(agent, "stream_async", None)
         if stream is None:
-            result = await asyncio.to_thread(agent, user_prompt)  # TODO: prefer invoke_async
+            result = await asyncio.to_thread(
+                agent, user_prompt
+            )  # TODO: prefer invoke_async
             if self.verbose:
                 print(result)
         else:
@@ -132,6 +158,7 @@ class StrandsRunner(AgentRunner):
 
     async def converse(self, task: Task) -> dict:
         from strands import tool
+
         captured: dict = {}
 
         def finalize_setup(manifest: dict) -> str:
@@ -139,7 +166,10 @@ class StrandsRunner(AgentRunner):
             captured["manifest"] = manifest
             return "setup finalized"
 
-        kwargs = {"system_prompt": task.setup_system_prompt(), "tools": [tool(finalize_setup)]}
+        kwargs = {
+            "system_prompt": task.setup_system_prompt(),
+            "tools": [tool(finalize_setup)],
+        }
         model = self._model()
         if model is not None:
             kwargs["model"] = model

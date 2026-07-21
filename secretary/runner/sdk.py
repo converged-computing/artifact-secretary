@@ -9,6 +9,7 @@ runs them two ways:
 
 Live use needs ANTHROPIC_API_KEY and the Claude Code CLI on PATH.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -51,8 +52,9 @@ class SDKRunner(AgentRunner):
         if self.verbose:
             print(message)
 
-    def _options(self, server_name: str, server, allowed: list[str],
-                 system_prompt: str) -> ClaudeAgentOptions:
+    def _options(
+        self, server_name: str, server, allowed: list[str], system_prompt: str
+    ) -> ClaudeAgentOptions:
         # Our tools are read-only or already gated by confirm_fn, so the SDK's
         # own permission prompts are redundant here.
         return ClaudeAgentOptions(
@@ -64,10 +66,16 @@ class SDKRunner(AgentRunner):
             max_turns=40,
         )
 
-    async def run_agent(self, system_prompt: str, user_prompt: str,
-                        tools: list[ToolSpec], confirm_fn: ConfirmFn) -> Any:
+    async def run_agent(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        tools: list[ToolSpec],
+        confirm_fn: ConfirmFn,
+    ) -> Any:
         server = create_sdk_mcp_server(
-            name="secretary", version="0.1.0",
+            name="secretary",
+            version="0.1.0",
             tools=[_to_sdk_tool(t, confirm_fn) for t in tools],
         )
         allowed = [f"mcp__secretary__{t.name}" for t in tools]
@@ -82,16 +90,19 @@ class SDKRunner(AgentRunner):
     async def converse(self, task: Task) -> dict:
         captured: dict = {}
 
-        @tool("finalize_setup",
-              "Finalize the setup manifest (matching the task's schema) and end setup.",
-              {"manifest": dict})
+        @tool(
+            "finalize_setup",
+            "Finalize the setup manifest (matching the task's schema) and end setup.",
+            {"manifest": dict},
+        )
         async def finalize(args):
             captured["manifest"] = args.get("manifest", args)
             return _say("setup finalized")
 
         server = create_sdk_mcp_server(name="setup", version="0.1.0", tools=[finalize])
-        options = self._options("setup", server, ["mcp__setup__finalize_setup"],
-                                task.setup_system_prompt())
+        options = self._options(
+            "setup", server, ["mcp__setup__finalize_setup"], task.setup_system_prompt()
+        )
 
         # The model asks the user for what it needs and drives the structure; we
         # relay each of the user's replies until it calls finalize_setup.

@@ -6,27 +6,33 @@ means*; these functions supply the ground truth it reasons over.
 
 All access goes through a Target, so every path is contained and read-only.
 """
+
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
-import fnmatch
-from pathlib import Path
 from dataclasses import asdict
+from pathlib import Path
 
-from elftools.elf.elffile import ELFFile
 from elftools.elf.dynamic import DynamicSection
+from elftools.elf.elffile import ELFFile
 
-from .target import Target
 from ..model.artifact import Provenance
+from .target import Target
 
 _ARCH = {
-    "x64": "amd64", "x86": "386", "AArch64": "arm64", "ARM": "arm",
-    "64-bit PowerPC": "ppc64le", "RISC-V": "riscv64", "IBM S/390": "s390x",
+    "x64": "amd64",
+    "x86": "386",
+    "AArch64": "arm64",
+    "ARM": "arm",
+    "64-bit PowerPC": "ppc64le",
+    "RISC-V": "riscv64",
+    "IBM S/390": "s390x",
 }
 
 
-def _is_elf(p) -> bool:
+def is_elf(p) -> bool:
     try:
         with open(p, "rb") as f:
             return f.read(4) == b"\x7fELF"
@@ -49,15 +55,22 @@ class Inspector:
             return out
         for e in sorted(d.iterdir(), key=lambda x: x.name):
             try:
-                kind = "dir" if e.is_dir() else ("elf" if _is_elf(e) else "file")
+                kind = "dir" if e.is_dir() else ("elf" if is_elf(e) else "file")
                 size = e.stat().st_size if e.is_file() else 0
             except OSError:
                 kind, size = "file", 0
-            out.append({"name": e.name, "kind": kind, "size": size, "path": self.t.display(e)})
+            out.append(
+                {"name": e.name, "kind": kind, "size": size, "path": self.t.display(e)}
+            )
         return out
 
-    def find(self, root: str = "/", name_glob: str | None = None,
-             kind: str | None = None, limit: int = 200) -> list[str]:
+    def find(
+        self,
+        root: str = "/",
+        name_glob: str | None = None,
+        kind: str | None = None,
+        limit: int = 200,
+    ) -> list[str]:
         """Walk under `root`, returning target-relative paths. kind: elf|file|dir."""
         base = self.t.resolve(root)
         hits: list[str] = []
@@ -66,12 +79,16 @@ class Inspector:
             if self.t.display(Path(cur)) in skip:
                 dirs[:] = []
                 continue
-            names = (dirs if kind == "dir" else files if kind in ("file", "elf") else dirs + files)
+            names = (
+                dirs
+                if kind == "dir"
+                else files if kind in ("file", "elf") else dirs + files
+            )
             for n in names:
                 if name_glob and not fnmatch.fnmatch(n, name_glob):
                     continue
                 p = Path(cur) / n
-                if kind == "elf" and not _is_elf(p):
+                if kind == "elf" and not is_elf(p):
                     continue
                 hits.append(self.t.display(p))
                 if len(hits) >= limit:
@@ -84,7 +101,7 @@ class Inspector:
         """The core 'what is this compiled against' call: arch, interpreter, and
         the dynamic linkage (NEEDED libraries, RPATH/RUNPATH, SONAME)."""
         p = self.t.resolve(path)
-        if not _is_elf(p):
+        if not is_elf(p):
             return {"path": self.t.display(p), "is_elf": False}
         with open(p, "rb") as f:
             elf = ELFFile(f)
@@ -108,13 +125,24 @@ class Inspector:
                         elif t == "DT_SONAME":
                             soname = tag.soname
             return {
-                "path": self.t.display(p), "is_elf": True, "arch": arch,
-                "type": str(elf.header.e_type), "interpreter": interp,
-                "needed": needed, "rpath": rpath, "runpath": runpath, "soname": soname,
+                "path": self.t.display(p),
+                "is_elf": True,
+                "arch": arch,
+                "type": str(elf.header.e_type),
+                "interpreter": interp,
+                "needed": needed,
+                "rpath": rpath,
+                "runpath": runpath,
+                "soname": soname,
             }
 
-    def scan_strings(self, path: str, patterns: list[str], max_hits: int = 40,
-                     max_bytes: int = 64 * 1024 * 1024) -> dict:
+    def scan_strings(
+        self,
+        path: str,
+        patterns: list[str],
+        max_hits: int = 40,
+        max_bytes: int = 64 * 1024 * 1024,
+    ) -> dict:
         """Grep printable strings in a binary/file for regexes (build flags,
         compiler banners, CUDA arch, package names)."""
         p = self.t.resolve(path)
@@ -146,7 +174,7 @@ class Inspector:
 
     # --- provenance (deterministic detectors the agent can lean on) ---------
 
-    _BUILD_MARKERS = {
+    BUILD_MARKERS = {
         "CMakeCache.txt": "cmake",
         "build.ninja": "ninja",
         "config.log": "autotools",
@@ -168,7 +196,7 @@ class Inspector:
         if any(n == ".spack" or n.startswith("spack-build") for n in entries):
             prov.build_system = "spack"
             prov.evidence.append(self.t.display(d) + " (spack build residue)")
-        for marker, system in self._BUILD_MARKERS.items():
+        for marker, system in self.BUILD_MARKERS.items():
             if marker in entries:
                 if prov.build_system in ("unknown",):
                     prov.build_system = system
@@ -177,15 +205,15 @@ class Inspector:
         cc = entries.get("CMakeCache.txt")
         if cc:
             prov.build_system = "cmake"
-            txt = cc.read_bytes()[:512 * 1024].decode("utf-8", "replace")
+            txt = cc.read_bytes()[: 512 * 1024].decode("utf-8", "replace")
             comp = re.search(r"CMAKE_CXX_COMPILER:\w+=(.+)", txt)
             if comp:
                 prov.compiler = comp.group(1).strip()
+            # raw compile flags only; app/package-specific interpretation is the
+            # consumer's job, so we don't hard-code any project's cache keys here.
             flags = re.search(r"CMAKE_CXX_FLAGS:\w+=(.+)", txt)
             if flags and flags.group(1).strip():
                 prov.flags += flags.group(1).split()
-            for feat in re.findall(r"(KOKKOS_ENABLE_\w+|Kokkos_ENABLE_\w+|GPU_API\w*|PKG_\w+):\w+=(ON|\S+)", txt):
-                prov.flags.append("=".join(feat))
         return asdict(prov)
 
 

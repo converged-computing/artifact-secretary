@@ -3,14 +3,15 @@ each container into the digest-keyed manifest lookup. Read-only; no setup
 approval needed (that gate is for tasks that act, like a later submit task).
 Iterates the catalog, so it overrides execute() and builds tools per image over
 that container's RemoteInspector."""
+
 from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from ..framework.core import Task, AgentRunner, ConfirmFn
-from ..framework.tools import inspection_tools
-from ..model.manifest import ManifestLookup, LookupEntry, Reproduce
 from ..container.session import ContainerSession, SkipContainer
+from ..framework.core import AgentRunner, ConfirmFn, Task
+from ..framework.tools import inspection_tools
+from ..model.manifest import LookupEntry, ManifestLookup, Reproduce
 
 CHARACTERIZE = """You characterize a compiled HPC application inside a container
 so a scheduler can decide where it can run. Use the read-only tools to LOCATE
@@ -52,7 +53,9 @@ class ProfileTask(Task):
     def execute_system_prompt(self, manifest: dict) -> str:
         return CHARACTERIZE
 
-    async def execute(self, runner: AgentRunner, manifest: dict, confirm_fn: ConfirmFn) -> ManifestLookup:
+    async def execute(
+        self, runner: AgentRunner, manifest: dict, confirm_fn: ConfirmFn
+    ) -> ManifestLookup:
         from .. import console
 
         lookup = ManifestLookup()
@@ -67,8 +70,9 @@ class ProfileTask(Task):
                     sess.on_progress = console.phase
                 if hasattr(sess, "install_python"):
                     sess.install_python = bool(manifest.get("install_python", True))
-                if hasattr(sess, "install_network"):
-                    sess.install_network = manifest.get("install_network", "bridge")
+                if hasattr(sess, "allow_network"):
+                    sess.allow_network = bool(manifest.get("allow_network", False))
+                    sess.network = manifest.get("network", "bridge")
                 with sess as backend:
                     entry.reproduce.digest = getattr(sess, "digest", "") or ""
                     entry.reproduce.pulled_by_us = getattr(sess, "pulled_by_us", False)
@@ -78,7 +82,9 @@ class ProfileTask(Task):
                         self.execute_system_prompt(manifest),
                         f"Characterize the HPC application(s) in image {ref}. "
                         f"Record each distinct build variant.",
-                        tools, confirm_fn)
+                        tools,
+                        confirm_fn,
+                    )
                     entry.artifacts = sink
                 console.ok(f"recorded {len(entry.artifacts)} artifact(s)")
             except SkipContainer as e:
@@ -88,4 +94,6 @@ class ProfileTask(Task):
         return lookup
 
     def validate_result(self, result: Any) -> None:
-        assert isinstance(result, ManifestLookup), "profile must produce a ManifestLookup"
+        assert isinstance(
+            result, ManifestLookup
+        ), "profile must produce a ManifestLookup"

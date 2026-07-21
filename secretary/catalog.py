@@ -9,6 +9,7 @@ not by tag name (e.g. an arm64 image tagged 'hpc7g' is correctly excluded).
 
 Pure stdlib. For private packages you'd need registry auth; that's out of scope.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,12 +18,14 @@ import urllib.parse
 import urllib.request
 
 _UA = "artifact-secretary"
-_MANIFEST_ACCEPT = ",".join([
-    "application/vnd.oci.image.index.v1+json",
-    "application/vnd.docker.distribution.manifest.list.v2+json",
-    "application/vnd.oci.image.manifest.v1+json",
-    "application/vnd.docker.distribution.manifest.v2+json",
-])
+_MANIFEST_ACCEPT = ",".join(
+    [
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+    ]
+)
 
 
 def _json(url: str, headers: dict | None = None):
@@ -32,12 +35,15 @@ def _json(url: str, headers: dict | None = None):
 
 
 def _text(url: str) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html"})
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html"}
+    )
     with urllib.request.urlopen(req) as r:
         return r.read().decode("utf-8", "ignore")
 
 
 # --- package names from the public org packages page --------------------------
+
 
 def list_packages(org: str, repo: str | None = None) -> list[str]:
     names: list[str] = []
@@ -46,9 +52,13 @@ def list_packages(org: str, repo: str | None = None) -> list[str]:
         q = {"per_page": "100", "page": str(page), "ecosystem": "container"}
         if repo:
             q["repo_name"] = repo
-        html = _text(f"https://github.com/orgs/{urllib.parse.quote(org)}/packages?{urllib.parse.urlencode(q)}")
-        found = [urllib.parse.unquote(m)
-                 for m in re.findall(r"/packages/container/package/([^\"?]+)", html)]
+        html = _text(
+            f"https://github.com/orgs/{urllib.parse.quote(org)}/packages?{urllib.parse.urlencode(q)}"
+        )
+        found = [
+            urllib.parse.unquote(m)
+            for m in re.findall(r"/packages/container/package/([^\"?]+)", html)
+        ]
         new = [n for n in found if n not in names]
         if not new:
             break
@@ -61,8 +71,11 @@ def list_packages(org: str, repo: str | None = None) -> list[str]:
 
 # --- tags and architecture from the anonymous registry ------------------------
 
+
 def _registry_token(repo_path: str) -> str:
-    tok, _ = _json(f"https://ghcr.io/token?scope=repository:{repo_path}:pull&service=ghcr.io")
+    tok, _ = _json(
+        f"https://ghcr.io/token?scope=repository:{repo_path}:pull&service=ghcr.io"
+    )
     return tok["token"]
 
 
@@ -75,7 +88,7 @@ def _tags(repo_path: str, token: str) -> list[str]:
         nxt = ""
         for part in headers.get("Link", "").split(","):
             if 'rel="next"' in part:
-                nxt = "https://ghcr.io" + part[part.find("<") + 1:part.find(">")]
+                nxt = "https://ghcr.io" + part[part.find("<") + 1 : part.find(">")]
         url = nxt
     return tags
 
@@ -83,8 +96,10 @@ def _tags(repo_path: str, token: str) -> list[str]:
 def tag_arches(repo_path: str, tag: str, token: str) -> list[str]:
     """linux/<arch> platforms a tag provides. Handles multi-arch indexes and
     single-manifest images (arch read from the config blob)."""
-    man, _ = _json(f"https://ghcr.io/v2/{repo_path}/manifests/{tag}",
-                   {"Authorization": f"Bearer {token}", "Accept": _MANIFEST_ACCEPT})
+    man, _ = _json(
+        f"https://ghcr.io/v2/{repo_path}/manifests/{tag}",
+        {"Authorization": f"Bearer {token}", "Accept": _MANIFEST_ACCEPT},
+    )
     if "manifests" in man:  # index / manifest list
         out = []
         for m in man["manifests"]:
@@ -95,16 +110,24 @@ def tag_arches(repo_path: str, tag: str, token: str) -> list[str]:
     cfg = (man.get("config") or {}).get("digest")
     if not cfg:
         return []
-    conf, _ = _json(f"https://ghcr.io/v2/{repo_path}/blobs/{cfg}",
-                    {"Authorization": f"Bearer {token}"})
+    conf, _ = _json(
+        f"https://ghcr.io/v2/{repo_path}/blobs/{cfg}",
+        {"Authorization": f"Bearer {token}"},
+    )
     return [f"{conf.get('os', 'linux')}/{conf.get('architecture', 'unknown')}"]
 
 
-def list_ghcr(org: str, repo: str | None = None, arch: str = "amd64",
-              exclude: tuple[str, ...] = (), on_note=None) -> list[str]:
+def list_ghcr(
+    org: str,
+    repo: str | None = None,
+    arch: str = "amd64",
+    exclude: tuple[str, ...] = (),
+    on_note=None,
+) -> list[str]:
     """Image references ghcr.io/<org>/<pkg>:<tag> for a repo. Keeps only tags
     that provide linux/<arch> (set arch='' to keep all). `exclude` drops tags
     containing any of the given substrings."""
+
     def note(msg):
         if on_note:
             on_note(msg)

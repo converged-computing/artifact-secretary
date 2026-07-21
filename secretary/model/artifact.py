@@ -15,46 +15,50 @@ A single source tree often yields MULTIPLE builds (LAMMPS: a KOKKOS/OpenMP CPU
 variant, a CUDA variant, a ROCm variant), so an Artifact holds a list of
 capability VARIANTS, not one answer.
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from typing import Optional
 import json
+from dataclasses import asdict, dataclass, field
+from typing import Optional
 
 
 @dataclass
 class Capability:
-    accelerator: str = "none"          # none|cuda|rocm
+    accelerator: str = "none"  # none|cuda|rocm
     gpu_libs: list[str] = field(default_factory=list)
     fabric_libfabric: bool = False
     fabric_efa: bool = False
     fabric_verbs: bool = False
-    mpi: str = "none"                  # none|openmpi|mpich|spectrum|intelmpi
+    mpi: str = "none"  # none|openmpi|mpich|spectrum|intelmpi
     mpi_libs: list[str] = field(default_factory=list)
 
 
 @dataclass
 class Provenance:
-    build_system: str = "unknown"      # cmake|autotools|make|ninja|spack|conda|unknown
-    compiler: str = ""                 # e.g. gcc, nvcc, clang, cray
+    build_system: str = "unknown"  # cmake|autotools|make|ninja|spack|conda|unknown
+    compiler: str = ""  # e.g. gcc, nvcc, clang, cray
     compiler_version: str = ""
     flags: list[str] = field(default_factory=list)
-    evidence: list[str] = field(default_factory=list)  # files/strings that support the above
+    evidence: list[str] = field(
+        default_factory=list
+    )  # files/strings that support the above
 
 
 @dataclass
 class Variant:
     """One hardware target the artifact was built to exploit."""
+
     arch: str
     accelerator: str = "none"
-    fabric: str = "none"               # none|efa|verbs|libfabric
+    fabric: str = "none"  # none|efa|verbs|libfabric
     note: str = ""
 
 
 @dataclass
 class Artifact:
-    application: str                    # e.g. "lammps"
-    binary: str                         # path (target-relative)
+    application: str  # e.g. "lammps"
+    binary: str  # path (target-relative)
     arch: str = "unknown"
     interpreter: str = ""
     needed: list[str] = field(default_factory=list)
@@ -63,8 +67,10 @@ class Artifact:
     capability: Capability = field(default_factory=Capability)
     provenance: Provenance = field(default_factory=Provenance)
     variants: list[Variant] = field(default_factory=list)
-    evidence: dict[str, list[str]] = field(default_factory=dict)  # field -> supporting paths
-    confidence: str = "medium"          # low|medium|high
+    evidence: dict[str, list[str]] = field(
+        default_factory=dict
+    )  # field -> supporting paths
+    confidence: str = "medium"  # low|medium|high
 
     def to_requires(self) -> dict:
         """Project the artifact into a fleetq `requires` block (hardware the
@@ -97,7 +103,9 @@ _MPI = {
 }
 
 
-def derive_capability(needed: list[str], rpath_libs: list[str] | None = None) -> Capability:
+def derive_capability(
+    needed: list[str], rpath_libs: list[str] | None = None
+) -> Capability:
     """Map linked libraries to hardware capability. Deterministic: the same
     inputs always give the same Capability."""
     libs = [x.lower() for x in list(needed) + list(rpath_libs or [])]
