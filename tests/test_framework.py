@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from secretary import Inspector, ProfileTask, Target, ToolSpec, run_task
 from secretary.framework.tools import inspection_tools
 from secretary.model.manifest import ManifestLookup
-from secretary.runner.sdk import _to_sdk_tool
+from behalf.runner.sdk import _to_sdk_tool
 
 
 class FakeSession:

@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Callable, Optional
 
 from ..container.session import ContainerSession, SkipContainer
-from ..framework.core import AgentRunner, ConfirmFn, Task
+from behalf import AgentRunner, ConfirmFn, Task
 from ..framework.tools import inspection_tools
 from ..model.manifest import LookupEntry, ManifestLookup, Reproduce
 
@@ -56,7 +56,7 @@ class ProfileTask(Task):
     async def execute(
         self, runner: AgentRunner, manifest: dict, confirm_fn: ConfirmFn
     ) -> ManifestLookup:
-        from .. import console
+        from behalf import console
 
         lookup = ManifestLookup()
         keep = bool(manifest.get("keep_images", False))
