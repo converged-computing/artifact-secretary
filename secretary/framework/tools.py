@@ -9,7 +9,7 @@ import json
 from typing import Any
 
 from ..model.artifact import Artifact, Provenance, derive_capability
-from .core import ToolSpec
+from behalf import ToolSpec
 
 
 def _text(obj: Any) -> dict:

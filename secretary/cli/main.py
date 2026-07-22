@@ -10,36 +10,8 @@ import json
 
 import anyio
 
-from ..framework.core import AgentRunner, run_task
+from behalf import AgentRunner, make_runner, run_task
 from ..tasks.profile import ProfileTask
-
-
-def make_runner(backend: str, model: str | None) -> AgentRunner:
-    if backend == "claude":
-        try:
-            from ..runner.sdk import SDKRunner
-        except ImportError as e:
-            raise SystemExit(
-                f"--backend claude needs the Claude Agent SDK: pip install claude-agent-sdk ({e})"
-            )
-        return SDKRunner(model) if model else SDKRunner()
-    if backend == "gemini":
-        try:
-            from ..runner.adk import ADKRunner
-        except ImportError as e:
-            raise SystemExit(
-                f"--backend gemini needs Google ADK: pip install google-adk ({e})"
-            )
-        return ADKRunner(model=model) if model else ADKRunner()
-    if backend == "aws":
-        try:
-            from ..runner.strands import StrandsRunner
-        except ImportError as e:
-            raise SystemExit(
-                f"--backend aws needs Strands: pip install strands-agents ({e})"
-            )
-        return StrandsRunner(model=model) if model else StrandsRunner()
-    raise SystemExit(f"unknown backend {backend!r} (choose: claude, gemini, aws)")
 
 
 def _cmd_profile(args):
