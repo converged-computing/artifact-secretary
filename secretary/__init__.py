@@ -15,13 +15,19 @@ from .framework import (
 from .inspection import Inspector, OutsideTargetError, Target
 from .model import (
     LOOKUP_SCHEMA_VERSION,
+    SHAPE_SCHEMA_VERSION,
     Artifact,
     Capability,
     LookupEntry,
     ManifestLookup,
     Provenance,
     Reproduce,
+    ScheduleShape,
+    ShapeLookup,
+    ShapeReport,
     Variant,
+    categorize_hits,
     derive_capability,
+    derive_shape,
 )
-from .tasks import ProfileTask
+from .tasks import ProfileTask, ShapeTask
