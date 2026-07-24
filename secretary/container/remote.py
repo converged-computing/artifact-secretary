@@ -48,6 +48,14 @@ class RemoteInspector:
             "scan_strings", path=path, patterns=patterns, max_hits=max_hits
         )
 
+    def scan_tree(self, root, patterns, max_hits_per_pattern=25):
+        return self._call(
+            "scan_tree",
+            root=root,
+            patterns=patterns,
+            max_hits_per_pattern=max_hits_per_pattern,
+        )
+
     def read_text(self, path, max_bytes=256 * 1024):
         return self._call("read_text", path=path, max_bytes=max_bytes)
 

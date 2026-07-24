@@ -222,6 +222,46 @@ class Inspector:
                 res[pat] = found
         return res
 
+    def scan_tree(
+        self,
+        root: str,
+        patterns: list[str],
+        max_hits_per_pattern: int = 25,
+        max_file_bytes: int = 2 * 1024 * 1024,
+    ) -> dict:
+        """Grep text files under `root` for regexes, returning per-pattern hits
+        with target-relative path + line + the matched text. Deterministic, and
+        the source-tree analog of scan_strings (which reads one binary): the
+        ground truth the shape agent reasons over. Binary/oversized files and
+        the usual pseudo-filesystems are skipped so this stays cheap and read-only.
+        """
+        base = self.t.resolve(root)
+        rxs = [(p, re.compile(p)) for p in patterns]
+        out: dict[str, list[dict]] = {p: [] for p in patterns}
+        skip_dirs = {".git", "node_modules", "__pycache__", ".spack"}
+        for cur, dirs, files in os.walk(base):
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            for n in files:
+                p = Path(cur) / n
+                try:
+                    if p.stat().st_size > max_file_bytes or is_elf(p):
+                        continue
+                    text = p.read_bytes().decode("utf-8", "ignore")
+                except OSError:
+                    continue
+                disp = self.t.display(p)
+                for pat, rx in rxs:
+                    if len(out[pat]) >= max_hits_per_pattern:
+                        continue
+                    for i, line in enumerate(text.splitlines(), 1):
+                        if rx.search(line):
+                            out[pat].append(
+                                {"path": disp, "line": i, "text": line.strip()[:200]}
+                            )
+                            if len(out[pat]) >= max_hits_per_pattern:
+                                break
+        return {p: hits for p, hits in out.items() if hits}
+
     def read_text(self, path: str, max_bytes: int = 256 * 1024) -> str:
         p = self.t.resolve(path)
         try:

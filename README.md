@@ -68,6 +68,8 @@ PY
 
 ## Usage
 
+### Container Profile
+
 Here is a one-off example:
 
 ```bash
@@ -107,6 +109,14 @@ for repo in $(cat repos.txt)
 done
 ```
 
+### Source Code Profile
+
+```bash
+# default execution is container.
+artifact-secretary shape --backend aws --model us.anthropic.claude-sonnet-5 \
+  --repos https://github.com/lammps/lammps --focus reaxff \
+  --max-source-tokens 60000 --model-max-tokens 16384 --out shapes.json
+```
 
 ## License
 

@@ -22,17 +22,24 @@ except ModuleNotFoundError:  # pragma: no cover
 from .inspection import Inspector, OutsideTargetError, Target
 from .model import (
     LOOKUP_SCHEMA_VERSION,
+    SHAPE_SCHEMA_VERSION,
     Artifact,
+    Assertion,
     Capability,
     LookupEntry,
     ManifestLookup,
     Provenance,
     Reproduce,
+    ScheduleShape,
+    ShapeLookup,
+    ShapeReport,
+    ShapeSchema,
+    ShapeTrace,
     Variant,
     derive_capability,
 )
 
 try:
-    from .tasks import ProfileTask
+    from .tasks import ProfileTask, ShapeTask
 except ModuleNotFoundError:  # pragma: no cover
     pass  # ProfileTask needs behalf; not required for the in-container probe

@@ -3,4 +3,6 @@ artifact_secretary.egg-info
 build
 dist
 *.json
+# ...but the shape grammar is source, not an output manifest
+!secretary/model/shape_schema.json
 __pycache__
