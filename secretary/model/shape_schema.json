@@ -1,0 +1,255 @@
+{
+  "version": "schedule-shape/v3",
+  "_comment": "The scheduling grammar as data. Grow it by adding fields or terminals here and bumping the version, never by hard coding these strings in code. Fields marked judgment are ones no static read can settle. negative_terminals are the values that mean nothing was found, and they need an absence search as evidence rather than a line.",
+  "fields": {
+    "parallelism": {
+      "type": "set",
+      "terminals": [
+        "serial",
+        "threaded",
+        "process",
+        "mpi",
+        "gpu",
+        "task"
+      ],
+      "description": "How the application expresses parallelism (may be several)."
+    },
+    "communication.model": {
+      "type": "enum",
+      "terminals": [
+        "none",
+        "point_to_point",
+        "collective",
+        "mixed"
+      ],
+      "description": "The dominant inter-process communication style."
+    },
+    "communication.pattern": {
+      "type": "set",
+      "terminals": [
+        "none",
+        "neighbor",
+        "all_to_all",
+        "reduction",
+        "broadcast",
+        "rma",
+        "pipeline",
+        "wavefront",
+        "unknown"
+      ],
+      "description": "Communication access patterns present, read from the actual calls. A set: sparse solvers are typically {neighbor, reduction} (halo exchange plus a per-iteration global dot product), and recording only one loses the constraint that matters."
+    },
+    "communication.intensity": {
+      "type": "enum",
+      "terminals": [
+        "none",
+        "low",
+        "moderate",
+        "high",
+        "unknown"
+      ],
+      "judgment": true,
+      "description": "How much of the runtime is spent communicating (agent judgment)."
+    },
+    "communication.latency_sensitive": {
+      "type": "bool",
+      "description": "Performance hinges on message latency (small frequent messages, neighbor exchange)."
+    },
+    "communication.bandwidth_sensitive": {
+      "type": "bool",
+      "description": "Performance hinges on NETWORK/interconnect bandwidth (large messages, all-to-all, big reductions). This is not about memory bandwidth -- for that use memory.bound_by; a code with no MPI at all must be False here even if it is memory-bandwidth bound."
+    },
+    "memory.shared_memory": {
+      "type": "bool",
+      "description": "Uses shared-memory between ranks (MPI shared windows, shm_open, /dev/shm); implies co-location."
+    },
+    "memory.numa_sensitive": {
+      "type": "bool",
+      "description": "Pins/binds threads or ranks; placement across NUMA domains matters."
+    },
+    "memory.hugepages": {
+      "type": "bool",
+      "description": "Requests or benefits from huge pages."
+    },
+    "memory.cpu_exclusive": {
+      "type": "bool",
+      "description": "Wants whole cores to itself (no cache/SMT sharing), e.g. explicit affinity pinning."
+    },
+    "accelerator.kind": {
+      "type": "enum",
+      "terminals": [
+        "none",
+        "cuda",
+        "rocm",
+        "sycl",
+        "opencl"
+      ],
+      "description": "GPU/accelerator programming model in use."
+    },
+    "accelerator.multi_gpu": {
+      "type": "bool",
+      "description": "Uses more than one device per process or coordinates across devices."
+    },
+    "accelerator.gpu_comm": {
+      "type": "enum",
+      "terminals": [
+        "none",
+        "nccl",
+        "rccl",
+        "gpu_aware_mpi"
+      ],
+      "description": "Direct GPU-to-GPU communication path (wants co-located devices / fast link)."
+    },
+    "launch.nodes": {
+      "type": "int",
+      "description": "Node count, only if literally stated in a real invocation."
+    },
+    "launch.tasks": {
+      "type": "int",
+      "description": "Total ranks/tasks, only if literally stated in a real invocation."
+    },
+    "launch.tasks_per_node": {
+      "type": "int",
+      "description": "Ranks per node, only if literally stated."
+    },
+    "launch.cpus_per_task": {
+      "type": "int",
+      "description": "Cores per rank, only if literally stated."
+    },
+    "launch.gpus_per_task": {
+      "type": "int",
+      "description": "GPUs per rank, only if literally stated."
+    },
+    "launch.threads_per_task": {
+      "type": "int",
+      "description": "Threads per rank (e.g. OMP_NUM_THREADS), only if literally stated."
+    },
+    "io.parallel_io": {
+      "type": "enum",
+      "terminals": [
+        "none",
+        "mpiio",
+        "hdf5",
+        "adios",
+        "netcdf"
+      ],
+      "description": "Parallel I/O library in use."
+    },
+    "io.checkpoint": {
+      "type": "bool",
+      "description": "Performs checkpoint/restart (scheduler may want to honor intervals / burst buffer)."
+    },
+    "topology.span": {
+      "type": "enum",
+      "terminals": [
+        "single_node",
+        "multi_node",
+        "either"
+      ],
+      "judgment": true,
+      "description": "Whether the run must/should span multiple nodes."
+    },
+    "topology.placement": {
+      "type": "enum",
+      "terminals": [
+        "any",
+        "pack",
+        "spread",
+        "neighbor"
+      ],
+      "judgment": true,
+      "description": "Preferred placement: pack for locality/bandwidth, spread for throughput, neighbor for stencil grids."
+    },
+    "topology.co_location": {
+      "type": "enum",
+      "terminals": [
+        "none",
+        "preferred",
+        "required"
+      ],
+      "judgment": true,
+      "description": "Whether ranks must (shared memory) or should (comm-heavy) land together."
+    },
+    "communication.ordered_dependency": {
+      "type": "bool",
+      "description": "Ranks form an ordered dependency chain (wavefront/sweep, e.g. upwind->downwind), so progress is serialized along an axis and one slow rank stalls the front. Distinct from symmetric neighbor exchange."
+    },
+    "memory.bound_by": {
+      "type": "enum",
+      "terminals": [
+        "unknown",
+        "compute",
+        "memory_bandwidth",
+        "memory_latency",
+        "network",
+        "io"
+      ],
+      "judgment": true,
+      "description": "What limits the code's performance. Documentation often states this outright ('this code is memory-access bound'); prefer such a statement over inference. Drives whether cores/cache must be exclusive."
+    },
+    "memory.arithmetic_intensity": {
+      "type": "enum",
+      "terminals": [
+        "unknown",
+        "very_low",
+        "low",
+        "moderate",
+        "high"
+      ],
+      "judgment": true,
+      "description": "Compute per byte moved. very_low means ~1-2 operations per memory access (sparse matvec, stream-like kernels); high means dense BLAS3-like reuse. Quote the figure if the source states one."
+    },
+    "memory.cache_reuse": {
+      "type": "enum",
+      "terminals": [
+        "unknown",
+        "poor",
+        "moderate",
+        "good"
+      ],
+      "judgment": true,
+      "description": "How well the working set reuses cache. Poor reuse plus memory_bandwidth bound is the case where sharing a core's cache with a co-tenant is most damaging."
+    }
+  },
+  "variants": {
+    "_comment": "How a variant name gets normalised. Tokens come from the terminals of the fields in tokens_from plus extra_tokens, so the vocabulary is never a second list in code. Anything else, a package or pair style name for instance, is kept as a free token when the name was already slug like. A prose name contributes only known tokens, since stray words cannot be canonicalised. Add an alias or a subsumption here rather than in code.",
+    "tokens_from": [
+      "parallelism",
+      "accelerator.kind",
+      "accelerator.gpu_comm"
+    ],
+    "aliases": {
+      "hip": "rocm",
+      "threads": "threaded",
+      "omp": "openmp",
+      "openmp": "threaded",
+      "thread": "threaded",
+      "nvidia": "cuda",
+      "amd": "rocm"
+    },
+    "subsumes": {
+      "cuda": [
+        "gpu"
+      ],
+      "rocm": [
+        "gpu"
+      ],
+      "sycl": [
+        "gpu"
+      ],
+      "opencl": [
+        "gpu"
+      ]
+    },
+    "max_length": 40,
+    "max_free_tokens": 2,
+    "extra_tokens": [
+      "cpu"
+    ],
+    "free_tokens_from_prose": false
+  },
+  "negative_terminals": [
+    "none",
+    "unknown"
+  ]
+}

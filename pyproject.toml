@@ -28,3 +28,6 @@ artifact-secretary = "secretary.cli.main:main"
 
 [tool.setuptools.packages.find]
 include = ["secretary*"]
+
+[tool.setuptools.package-data]
+secretary = ["model/*.json"]
