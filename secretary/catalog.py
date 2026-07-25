@@ -13,6 +13,7 @@ Pure stdlib. For private packages you'd need registry auth; that's out of scope.
 from __future__ import annotations
 
 import json
+import platform
 import re
 import urllib.parse
 import urllib.request
@@ -157,3 +158,42 @@ def list_ghcr(
             kept += 1
         note(f"{pkg}: {kept} tag(s)")
     return sorted(set(refs))
+
+
+# --- host architecture matching (derive arch from the image manifest, not tags) -
+
+_HOST_ARCH = {"x86_64": "amd64", "amd64": "amd64",
+              "aarch64": "arm64", "arm64": "arm64", "armv7l": "arm"}
+
+
+def host_arch() -> str:
+    """This machine's arch as an OCI arch string (amd64 / arm64)."""
+    m = platform.machine().lower()
+    return _HOST_ARCH.get(m, m)
+
+
+def reference_arches(reference: str) -> list[str]:
+    """linux/<arch> platforms a full image reference provides, read from the GHCR
+    registry manifest (never the tag string). Returns [] when it can't be
+    determined (non-GHCR reference, private, or offline) so callers can fail open.
+    """
+    if not reference.startswith("ghcr.io/"):
+        return []  # only GHCR is readable anonymously here
+    body = reference[len("ghcr.io/"):]
+    tag = "latest"
+    if ":" in body.rsplit("/", 1)[-1]:
+        body, tag = body.rsplit(":", 1)
+    try:
+        token = _registry_token(body)
+        return tag_arches(body, tag, token)
+    except Exception:
+        return []
+
+
+def host_supports(reference: str) -> tuple[bool, list[str]]:
+    """(can this host run the image, platforms it provides). Fail-open: if the
+    platforms are unknown, returns True so we don't wrongly skip."""
+    arches = reference_arches(reference)
+    if not arches:
+        return True, arches
+    return f"linux/{host_arch()}" in arches, arches
