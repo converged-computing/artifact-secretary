@@ -31,6 +31,7 @@ from .model import (
     Variant,
     derive_capability,
 )
+
 try:
     from .tasks import ProfileTask
 except ModuleNotFoundError:  # pragma: no cover
