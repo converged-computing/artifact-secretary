@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, Callable, Optional
 
 from ..container.session import ContainerSession, SkipContainer
+from ..catalog import host_arch, host_supports
 from behalf import AgentRunner, ConfirmFn, Task
 from ..framework.tools import inspection_tools
 from ..model.manifest import LookupEntry, ManifestLookup, Reproduce
@@ -60,11 +61,19 @@ class ProfileTask(Task):
 
         lookup = ManifestLookup()
         keep = bool(manifest.get("keep_images", False))
+        any_arch = bool(manifest.get("any_arch", False))
         catalog = manifest.get("catalog", [])
         for i, ref in enumerate(catalog, 1):
             console.header(ref, i, len(catalog))
             entry = LookupEntry(reproduce=Reproduce(reference=ref))
             try:
+                if not any_arch:
+                    ok, arches = host_supports(ref)
+                    if not ok:
+                        raise SkipContainer(
+                            f"image provides {', '.join(arches)} but host is "
+                            f"linux/{host_arch()} — profile it on a matching host "
+                            f"(or pass --any-arch to override)")
                 sess = self.session_factory(ref, keep)
                 if hasattr(sess, "on_progress"):
                     sess.on_progress = console.phase

@@ -26,6 +26,7 @@ def _cmd_profile(args):
             "install_python": args.install_python,
             "allow_network": args.allow_network,
             "network": args.network,
+            "any_arch": args.any_arch,
         }
 
     runner = make_runner(args.backend, args.model)
@@ -72,6 +73,8 @@ def main():
     )
     p.add_argument("--goal", default="Characterize each image's build variants.")
     p.add_argument("--keep-images", action="store_true")
+    p.add_argument("--any-arch", action="store_true",
+                   help="do not skip images whose manifest arch differs from the host")
     p.add_argument(
         "--no-install-python",
         dest="install_python",
