@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "artifact-secretary"
-version = "0.0.1"
+version = "0.0.11"
 description = "Agentic discovery of compiled HPC applications: characterize an artifact's arch, linkage, capability, and provenance so a scheduler knows where it can run."
 readme = "README.md"
 requires-python = ">=3.10"

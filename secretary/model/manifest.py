@@ -90,9 +90,13 @@ class ManifestLookup:
 
     def save_tree(self, root: str) -> list[str]:
         """Write one manifest.json per image under
-        root/<registry>/<org>/<repo>/<tag>/. Returns the paths written."""
+        root/<registry>/<org>/<repo>/<tag>/. An entry whose characterization was
+        skipped (e.g. an image whose arch we couldn't inspect) carries no facts,
+        so no manifest is written for it. Returns the paths written."""
         written = []
         for entry in self.entries.values():
+            if entry.skipped:
+                continue
             path = "/".join(
                 [root, *parse_reference(entry.reproduce.reference), "manifest.json"]
             )
