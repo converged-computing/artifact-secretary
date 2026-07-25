@@ -107,3 +107,36 @@ if __name__ == "__main__":
     ]:
         fn()
     print("\nall core tests passed")
+
+
+def test_save_tree_skips_ungeneratable_manifests():
+    """A container we couldn't characterize (e.g. an arch we can't inspect)
+    records a skip reason and no artifacts. save_tree must not emit a
+    manifest.json for it, and it must not be counted among the written paths."""
+    from secretary.model import LookupEntry, ManifestLookup, Reproduce
+
+    lk = ManifestLookup()
+
+    good = LookupEntry(
+        reproduce=Reproduce(reference="ghcr.io/org/app:amd64", digest="sha256:aaa")
+    )
+    good.artifacts = [Artifact(application="lammps", binary="/opt/lammps/bin/lmp")]
+
+    skipped = LookupEntry(
+        reproduce=Reproduce(reference="ghcr.io/org/app:arm64", digest="sha256:bbb")
+    )
+    skipped.skipped = (
+        "no usable python3 in image — could not fetch a standalone python (arm64)"
+    )
+
+    lk.add(good)
+    lk.add(skipped)
+
+    with tempfile.TemporaryDirectory() as d:
+        paths = lk.save_tree(d)
+        on_disk = sorted(str(p) for p in pathlib.Path(d).rglob("manifest.json"))
+        # only the characterizable image yields a manifest
+        assert len(paths) == 1, paths
+        assert len(on_disk) == 1, on_disk
+        assert "amd64" in paths[0] and "arm64" not in paths[0], paths
+        print("OK save_tree omits ungeneratable manifest:", paths[0])
