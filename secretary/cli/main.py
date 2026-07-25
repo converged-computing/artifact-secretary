@@ -73,8 +73,11 @@ def main():
     )
     p.add_argument("--goal", default="Characterize each image's build variants.")
     p.add_argument("--keep-images", action="store_true")
-    p.add_argument("--any-arch", action="store_true",
-                   help="do not skip images whose manifest arch differs from the host")
+    p.add_argument(
+        "--any-arch",
+        action="store_true",
+        help="do not skip images whose manifest arch differs from the host",
+    )
     p.add_argument(
         "--no-install-python",
         dest="install_python",

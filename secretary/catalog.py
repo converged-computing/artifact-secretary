@@ -162,8 +162,13 @@ def list_ghcr(
 
 # --- host architecture matching (derive arch from the image manifest, not tags) -
 
-_HOST_ARCH = {"x86_64": "amd64", "amd64": "amd64",
-              "aarch64": "arm64", "arm64": "arm64", "armv7l": "arm"}
+_HOST_ARCH = {
+    "x86_64": "amd64",
+    "amd64": "amd64",
+    "aarch64": "arm64",
+    "arm64": "arm64",
+    "armv7l": "arm",
+}
 
 
 def host_arch() -> str:
@@ -179,7 +184,7 @@ def reference_arches(reference: str) -> list[str]:
     """
     if not reference.startswith("ghcr.io/"):
         return []  # only GHCR is readable anonymously here
-    body = reference[len("ghcr.io/"):]
+    body = reference[len("ghcr.io/") :]
     tag = "latest"
     if ":" in body.rsplit("/", 1)[-1]:
         body, tag = body.rsplit(":", 1)

@@ -73,7 +73,8 @@ class ProfileTask(Task):
                         raise SkipContainer(
                             f"image provides {', '.join(arches)} but host is "
                             f"linux/{host_arch()} — profile it on a matching host "
-                            f"(or pass --any-arch to override)")
+                            f"(or pass --any-arch to override)"
+                        )
                 sess = self.session_factory(ref, keep)
                 if hasattr(sess, "on_progress"):
                     sess.on_progress = console.phase
