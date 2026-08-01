@@ -1,5 +1,7 @@
 # artifact-secretary
 
+[![DOI](https://zenodo.org/badge/1307057776.svg)](https://doi.org/10.5281/zenodo.21746007)
+
 ![https://github.com/converged-computing/artifact-secretary/blob/main/img/artifact-secretary-small.png](https://github.com/converged-computing/artifact-secretary/blob/main/img/artifact-secretary-small.png)
 
 [![PyPI - Version](https://img.shields.io/pypi/v/artifact-secretary)](https://badge.fury.io/py/artifact-secretary)
