@@ -12,7 +12,7 @@ from ..container.session import ContainerSession, SkipContainer
 from ..catalog import host_arch, host_supports
 from behalf import AgentRunner, ConfirmFn, Task
 from ..framework.tools import inspection_tools
-from ..model.manifest import LookupEntry, ManifestLookup, Reproduce
+from ..model.manifest import LookupEntry, ManifestLookup, Platform, Reproduce
 
 CHARACTERIZE = """You characterize a compiled HPC application inside a container
 so a scheduler can decide where it can run. Use the read-only tools to LOCATE
@@ -86,6 +86,14 @@ class ProfileTask(Task):
                 with sess as backend:
                     entry.reproduce.digest = getattr(sess, "digest", "") or ""
                     entry.reproduce.pulled_by_us = getattr(sess, "pulled_by_us", False)
+                    # Recorded before the agent runs: it is a fact about the
+                    # image, not something to be characterized or judged.
+                    try:
+                        entry.platform = Platform(**(backend.platform() or {}))
+                    except (
+                        Exception
+                    ) as e:  # noqa: BLE001 - never fail a profile on this
+                        console.phase(f"platform probe failed: {e}")
                     sink = []
                     tools = inspection_tools(backend, sink)
                     await runner.run_agent(

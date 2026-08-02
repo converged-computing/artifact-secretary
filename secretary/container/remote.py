@@ -29,6 +29,9 @@ class RemoteInspector:
             return {"error": res.text}
         return json.loads(res.stdout)
 
+    def platform(self):
+        return self._call("platform")
+
     def list_dir(self, path="/"):
         return self._call("list_dir", path=path)
 

@@ -48,6 +48,55 @@ class Inspector:
 
     # --- navigation ---------------------------------------------------------
 
+    def platform(self) -> dict:
+        """The container's libc and OS.
+
+        This decides which flux view can be mounted into the image: the view's
+        binaries link against the CONTAINER's libc, so a view built on a newer
+        glibc will not load (`version GLIBC_2.38 not found`). It is a property of
+        the image, like arch, so it belongs in the manifest rather than being
+        guessed per cluster.
+        """
+        import os as _os
+
+        out = {
+            "libc_flavor": "",
+            "libc_version": "",
+            "os_id": "",
+            "os_version_id": "",
+            "os_codename": "",
+        }
+        try:
+            # CS_GNU_LIBC_VERSION is "glibc 2.35". No subprocess, no ldd.
+            flavor, _, version = (_os.confstr("CS_GNU_LIBC_VERSION") or "").partition(
+                " "
+            )
+            out["libc_flavor"], out["libc_version"] = flavor, version
+        except (ValueError, OSError):
+            pass
+        if not out["libc_version"]:
+            try:
+                import platform as _platform
+
+                out["libc_flavor"], out["libc_version"] = _platform.libc_ver()
+            except Exception:  # noqa: BLE001 - musl and friends report nothing
+                pass
+        try:
+            for line in self.read_text("/etc/os-release", 64 * 1024).splitlines():
+                if "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                v = v.strip().strip('"').strip("'")
+                if k == "ID":
+                    out["os_id"] = v
+                elif k == "VERSION_ID":
+                    out["os_version_id"] = v
+                elif k == "VERSION_CODENAME":
+                    out["os_codename"] = v
+        except Exception:  # noqa: BLE001 - not every image has os-release
+            pass
+        return out
+
     def list_dir(self, path: str = "/") -> list[dict]:
         d = self.t.resolve(path)
         out = []
