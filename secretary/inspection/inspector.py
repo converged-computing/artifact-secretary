@@ -16,6 +16,16 @@ from dataclasses import asdict
 from pathlib import Path
 
 from elftools.elf.dynamic import DynamicSection
+
+# Sections that hold compiled device kernels, keyed to the toolchain that emits
+# them. Present whether the runtime is linked statically or dynamically.
+_DEVICE_SECTIONS = {
+    ".nv_fatbin": "cuda",
+    ".nvFatBinSegment": "cuda",
+    "__nv_relfatbin": "cuda",
+    ".hip_fatbin": "rocm",
+    ".hipFatBinSegment": "rocm",
+}
 from elftools.elf.elffile import ELFFile
 
 from ..model.artifact import Provenance
@@ -161,7 +171,14 @@ class Inspector:
                     interp = seg.get_interp_name()
                     break
             needed, rpath, runpath, soname = [], [], [], ""
+            device_code = []
             for sec in elf.iter_sections():
+                # Embedded device code. A CUDA or HIP build linked against the
+                # static runtime has no DT_NEEDED for libcuda, so dynamic
+                # linkage alone reports it as CPU only. The fatbin section is
+                # the evidence in that case.
+                if sec.name in _DEVICE_SECTIONS:
+                    device_code.append(sec.name)
                 if isinstance(sec, DynamicSection):
                     for tag in sec.iter_tags():
                         t = tag.entry.d_tag
@@ -183,6 +200,7 @@ class Inspector:
                 "rpath": rpath,
                 "runpath": runpath,
                 "soname": soname,
+                "device_code": sorted(set(device_code)),
             }
 
     def scan_strings(

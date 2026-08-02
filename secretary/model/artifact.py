@@ -96,6 +96,14 @@ class Artifact:
 
 _GPU_CUDA = ("libcudart", "libcuda.so", "libcublas", "libcudnn", "libnccl")
 _GPU_ROCM = ("libamdhip64", "librocm", "libhsa-runtime", "librocblas", "librccl")
+_DEVICE_SECTIONS = {
+    ".nv_fatbin": "cuda",
+    ".nvFatBinSegment": "cuda",
+    "__nv_relfatbin": "cuda",
+    ".hip_fatbin": "rocm",
+    ".hipFatBinSegment": "rocm",
+}
+
 _MPI = {
     "openmpi": ("libmpi.so", "libopen-rte", "libopen-pal"),
     "mpich": ("libmpich", "libmpifort"),
@@ -104,7 +112,9 @@ _MPI = {
 
 
 def derive_capability(
-    needed: list[str], rpath_libs: list[str] | None = None
+    needed: list[str],
+    rpath_libs: list[str] | None = None,
+    device_code: list[str] | None = None,
 ) -> Capability:
     """Map linked libraries to hardware capability. Deterministic: the same
     inputs always give the same Capability."""
@@ -113,12 +123,24 @@ def derive_capability(
 
     gpu_hits = [l for l in libs if any(l.startswith(p) for p in _GPU_CUDA)]
     rocm_hits = [l for l in libs if any(l.startswith(p) for p in _GPU_ROCM)]
+    # A statically linked runtime leaves no library to find, so embedded device
+    # code is the only evidence. Kripke links libcudart_static.a and reports no
+    # cuda library at all while carrying .nv_fatbin.
+    sections = [s for s in (device_code or [])]
+    static_cuda = [s for s in sections if _DEVICE_SECTIONS.get(s) == "cuda"]
+    static_rocm = [s for s in sections if _DEVICE_SECTIONS.get(s) == "rocm"]
     if gpu_hits:
         cap.accelerator = "cuda"
         cap.gpu_libs = sorted(set(gpu_hits))
     elif rocm_hits:
         cap.accelerator = "rocm"
         cap.gpu_libs = sorted(set(rocm_hits))
+    elif static_cuda:
+        cap.accelerator = "cuda"
+        cap.gpu_libs = sorted(f"{s} (static)" for s in set(static_cuda))
+    elif static_rocm:
+        cap.accelerator = "rocm"
+        cap.gpu_libs = sorted(f"{s} (static)" for s in set(static_rocm))
 
     for l in libs:
         if l.startswith("libfabric.so"):

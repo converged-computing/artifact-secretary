@@ -45,7 +45,10 @@ def inspection_tools(backend, sink: list[Artifact]) -> list[ToolSpec]:
     async def record_artifact(a):
         needed = a.get("needed", []) or []
         rpath = a.get("rpath", []) or []
-        cap = derive_capability(needed, rpath)
+        # inspect_elf reports device_code; the agent passes it back so a
+        # statically linked CUDA or HIP build is still recognised as GPU capable.
+        device_code = a.get("device_code", []) or []
+        cap = derive_capability(needed, rpath, device_code)
         prov = Provenance(
             **{
                 k: v
@@ -108,13 +111,18 @@ def inspection_tools(backend, sink: list[Artifact]) -> list[ToolSpec]:
         ToolSpec(
             "record_artifact",
             "Record one characterized build variant; capability is derived "
-            "from the linkage. Call once per distinct build found.",
+            "from the linkage and from any embedded device code. Pass "
+            "device_code straight through from inspect_elf: a CUDA or HIP build "
+            "linked against the static runtime has no gpu library to find, and "
+            "the fatbin section is the only evidence it can use a GPU. "
+            "Call once per distinct build found.",
             {
                 "application": str,
                 "binary": str,
                 "arch": str,
                 "needed": list,
                 "rpath": list,
+                "device_code": list,
                 "provenance": dict,
                 "confidence": str,
             },
