@@ -52,9 +52,26 @@ class Reproduce:
 
 
 @dataclass
+class Platform:
+    """The container's libc and OS.
+
+    Decides which flux view can be mounted into this image: a view links against
+    the CONTAINER's libc, so one built on a newer glibc will not load. A property
+    of the image, like arch, so it is recorded here rather than guessed later.
+    """
+
+    libc_flavor: str = ""
+    libc_version: str = ""
+    os_id: str = ""
+    os_version_id: str = ""
+    os_codename: str = ""
+
+
+@dataclass
 class LookupEntry:
     reproduce: Reproduce
     artifacts: list[Artifact] = field(default_factory=list)
+    platform: Platform = field(default_factory=Platform)
     skipped: str = ""  # reason if characterization was skipped
     notes: str = ""
 
