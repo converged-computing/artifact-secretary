@@ -37,6 +37,9 @@ export ANTHROPIC_API_KEY=sk-ant-...
 export AWS_ACCESS_KEY_ID=...
 export AWS_SECRET_ACCESS_KEY=...
 export AWS_DEFAULT_REGION=us-east-1
+
+# OR
+export AWS_BEARER_TOKEN_BEDROCK=...
 ```
 
 Test connection:
@@ -101,8 +104,8 @@ And then derive each one:
 ```bash
 for repo in $(cat repos.txt)
   do
-    artifact-secretary profile --backend aws --model us.anthropic.claude-sonnet-5 \
-      --catalog "$repo" --out-dir manifests --allow-network --keep-images
+    artifact-secretary profile --backend aws --model us.anthropic.claude-opus-5 \
+      --catalog "$repo" --out-dir manifests --allow-network
 done
 ```
 
