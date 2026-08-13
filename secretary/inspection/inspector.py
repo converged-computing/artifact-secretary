@@ -16,19 +16,9 @@ from dataclasses import asdict
 from pathlib import Path
 
 from elftools.elf.dynamic import DynamicSection
-
-# Sections that hold compiled device kernels, keyed to the toolchain that emits
-# them. Present whether the runtime is linked statically or dynamically.
-_DEVICE_SECTIONS = {
-    ".nv_fatbin": "cuda",
-    ".nvFatBinSegment": "cuda",
-    "__nv_relfatbin": "cuda",
-    ".hip_fatbin": "rocm",
-    ".hipFatBinSegment": "rocm",
-}
 from elftools.elf.elffile import ELFFile
 
-from ..model.artifact import Provenance
+from ..model.artifact import _DEVICE_SECTIONS, Provenance
 from .target import Target
 
 _ARCH = {
