@@ -1,0 +1,51 @@
+name: artifact-secretary ci
+
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # The black hook is `language: python` with no additional_dependencies,
+      # so pre-commit expects black to already be on PATH.
+      - name: Install pre-commit and black
+        run: pip install pre-commit black
+      - name: Run pre-commit
+        run: pre-commit run --all-files --show-diff-on-failure
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      # The claude extra provides claude_agent_sdk, which tests/test_framework.py
+      # reaches via `from behalf.runner.sdk import _to_sdk_tool`. Installing only
+      # [dev] fails at collection time.
+      - name: Install
+        run: pip install -e ".[claude,dev]"
+      - name: Run tests
+        run: pytest tests/ -v
+      - name: Smoke test the console script
+        run: artifact-secretary --help
